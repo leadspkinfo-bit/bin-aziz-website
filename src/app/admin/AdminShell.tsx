@@ -1,8 +1,21 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { AdminSignOut } from "./AdminSignOut";
 
-/** Admin page chrome. `actions` adds buttons next to "View website". */
-export function AdminShell({ email, actions, children }: { email: string | undefined; actions?: ReactNode; children: ReactNode }) {
+const SECTIONS = [
+  ["/admin", "Inquiries"],
+  ["/admin/quotations", "Quotations"],
+  ["/admin/spos", "SPO activity"],
+  ["/admin/rates/makkah", "Makkah hotels"],
+  ["/admin/rates/madina", "Madina hotels"],
+  ["/admin/rates/visa", "Visa"],
+  ["/admin/rates/seasons", "Seasons"],
+  ["/admin/rates/settings", "Settings"],
+  ["/admin/scan", "AI sync"],
+];
+
+/** Admin page chrome. `actions` adds buttons next to "View website"; `nav={false}` hides the section tabs (/admin1998). */
+export function AdminShell({ email, actions, nav = true, children }: { email: string | undefined; actions?: ReactNode; nav?: boolean; children: ReactNode }) {
   return (
     <div className="mx-auto max-w-5xl px-5 py-12 md:py-16">
       <header className="flex flex-wrap items-center justify-between gap-4">
@@ -18,6 +31,15 @@ export function AdminShell({ email, actions, children }: { email: string | undef
           <AdminSignOut />
         </div>
       </header>
+      {nav && (
+        <nav aria-label="Admin" className="mt-6 flex flex-wrap gap-2">
+          {SECTIONS.map(([href, label]) => (
+            <Link key={href} href={href} className="rounded-full border border-ivory-100/15 px-4 py-1.5 text-xs transition hover:border-gold-400 hover:text-gold-300">
+              {label}
+            </Link>
+          ))}
+        </nav>
+      )}
       {children}
     </div>
   );

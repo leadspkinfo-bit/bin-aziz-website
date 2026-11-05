@@ -34,6 +34,7 @@ export const nav = [
   { href: "/services", label: "Services" },
   { href: "/umrah-guide", label: "Umrah Guide" },
   { href: "/hajj-guide", label: "Hajj Guide" },
+  { href: "/calculator", label: "Calculator" },
   { href: "/packages", label: "Packages" },
   { href: "/membership", label: "Become a Member" },
   { href: "/contact", label: "Contact" },

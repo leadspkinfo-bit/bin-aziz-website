@@ -8,6 +8,7 @@ import { toggleSetting } from "./actions";
 const groups: { grp: SettingRow["grp"]; title: string; hint: string }[] = [
   { grp: "pages", title: "Pages", hint: "A switched-off page disappears from the menu and shows “page not found”." },
   { grp: "home", title: "Home page sections", hint: "Show or hide each section of the home page." },
+  { grp: "calculator", title: "Calculator page", hint: "Show or hide each part of the Umrah calculator. A hidden part is left out of the quotation too." },
   { grp: "security", title: "Security", hint: "Blocks right-click, F12 and Ctrl+Shift+I / Ctrl+U. It deters casual copying — browsers can still open Inspect from their menu." },
 ];
 

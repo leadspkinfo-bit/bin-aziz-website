@@ -4,15 +4,15 @@ import { createClient } from "@/lib/supabase/server";
 
 /**
  * For admin pages (render inside <Suspense> — reads cookies).
- * Not signed in → redirect to /admin/login. Signed in but not an admin → `isAdmin: false`.
+ * Not signed in → redirect to /admin/login (and back to `from` after login). Signed in but not an admin → `isAdmin: false`.
  * Database policies enforce the same rule, so this is about showing the right screen.
  */
-export async function getAdmin() {
+export async function getAdmin(from = "/admin") {
   // Supabase checks token expiry with Date.now(); keep this out of prerendering.
   await connection();
   const supabase = await createClient();
   const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) redirect("/admin/login");
+  if (!auth.user) redirect(from === "/admin" ? "/admin/login" : `/admin/login?next=${encodeURIComponent(from)}`);
   const { data: isAdmin } = await supabase.rpc("is_admin");
   return { supabase, user: auth.user, isAdmin: Boolean(isAdmin) };
 }

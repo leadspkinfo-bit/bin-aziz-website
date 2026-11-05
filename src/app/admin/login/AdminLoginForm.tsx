@@ -7,7 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 const field =
   "mt-1.5 w-full rounded-xl border border-night-900/12 bg-white px-4 py-3 text-night-900 outline-none transition focus:border-gold-500 focus:ring-4 focus:ring-gold-500/15";
 
-export function AdminLoginForm() {
+/** `onSuccess` replaces the default jump to /admin (the calculator signs in without leaving the page). */
+export function AdminLoginForm({ onSuccess }: { onSuccess?: () => void }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +35,14 @@ export function AdminLoginForm() {
       setLoading(false);
       return setError("This account does not have admin access.");
     }
-    router.push("/admin");
+    if (onSuccess) {
+      setLoading(false);
+      onSuccess();
+    } else {
+      // back to the admin page that sent here; only same-site admin paths are allowed
+      const next = new URLSearchParams(window.location.search).get("next") ?? "";
+      router.push(/^\/admin(1998)?(\/|$)/.test(next) ? next : "/admin");
+    }
     router.refresh();
   }
 

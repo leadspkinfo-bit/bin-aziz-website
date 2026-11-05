@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
   // 92 is used for the leadership portraits, which visibly break up at the default 75.
   images: { qualities: [75, 92] },
   partialPrefetching: true,
+  // The quotation PDF is rendered on the server and reads its images from public/pdf at runtime.
+  serverExternalPackages: ["@react-pdf/renderer"],
+  outputFileTracingIncludes: { "/api/quotations/**": ["./public/pdf/**"] },
   turbopack: {
     rules: {
       "*.css": {

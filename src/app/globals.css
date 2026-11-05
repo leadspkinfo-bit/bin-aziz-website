@@ -106,3 +106,48 @@
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Calculator: a season bar whose rates are uploaded gets a thin golden line running round its border, clockwise. */
+@property --rate-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.rate-glow {
+  position: relative;
+  isolation: isolate;
+}
+.rate-glow::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 2px;
+  border-radius: inherit;
+  /* conic angles run clockwise, so turning the start angle up turns the light clockwise */
+  background: conic-gradient(
+    from var(--rate-angle),
+    transparent 0deg 250deg,
+    color-mix(in srgb, var(--color-gold-400) 40%, transparent) 290deg,
+    var(--color-gold-500) 330deg,
+    var(--color-gold-300) 350deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: rate-glow-turn 3.5s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+@keyframes rate-glow-turn {
+  to {
+    --rate-angle: 360deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rate-glow::before {
+    background: var(--color-gold-500);
+  }
+}

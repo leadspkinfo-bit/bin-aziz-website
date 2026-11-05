@@ -19,13 +19,13 @@ export async function grantControls(userId: string) {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
-    path: "/admin",
+    path: "/", // /admin and /admin1998 both use it
     maxAge: TTL_MS / 1000,
   });
 }
 
 export async function revokeControls() {
-  (await cookies()).delete({ name: COOKIE, path: "/admin" });
+  (await cookies()).delete({ name: COOKIE, path: "/" });
 }
 
 export async function hasControls(userId: string) {

@@ -11,6 +11,7 @@ export type SettingKey =
   | "page_umrah_guide"
   | "umrah_journey"
   | "page_hajj_guide"
+  | "page_calculator"
   | "page_packages"
   | "page_membership"
   | "page_contact"
@@ -24,9 +25,16 @@ export type SettingKey =
   | "whatsapp_button"
   | "three_d"
   | "ticket_3d"
-  | "block_inspect";
+  | "block_inspect"
+  | CalcSection;
 
-export type SettingRow = { key: SettingKey; label: string; grp: "global" | "pages" | "home" | "security"; enabled: boolean };
+/** The parts of the /calculator page, each with its own switch on /admin1998. */
+/** `calc_packages` is the whole packages block: package cards, Add package, the buttons and the grand total. */
+export const CALC_SECTIONS = ["calc_client", "calc_ticket", "calc_makkah", "calc_madina", "calc_children", "calc_notes", "calc_packages"] as const;
+export type CalcSection = (typeof CALC_SECTIONS)[number];
+export type CalcSections = Record<CalcSection, boolean>;
+
+export type SettingRow = { key: SettingKey; label: string; grp: "global" | "pages" | "home" | "security" | "calculator"; enabled: boolean };
 export type Settings = Record<SettingKey, boolean>;
 
 // Until the table exists (or if it can't be reached) the site stays fully on.
@@ -37,6 +45,7 @@ const DEFAULTS: Settings = {
   page_umrah_guide: true,
   umrah_journey: true, // the planner and the journey stage on /umrah-guide
   page_hajj_guide: false, // still being built — stays hidden until switched on
+  page_calculator: false, // stays hidden until the rate lists are loaded
   page_packages: true,
   page_membership: true,
   page_contact: true,
@@ -51,6 +60,13 @@ const DEFAULTS: Settings = {
   three_d: false, // 3D fleet — plain cards unless the admin switches it on
   ticket_3d: false, // scrolling 3D ticket — plain hero unless switched on
   block_inspect: false,
+  calc_client: true,
+  calc_ticket: true,
+  calc_makkah: true,
+  calc_madina: true,
+  calc_children: true,
+  calc_notes: true,
+  calc_packages: true,
 };
 
 /**
@@ -89,6 +105,7 @@ export const pageKeyForHref: Record<string, SettingKey> = {
   "/services": "page_services",
   "/umrah-guide": "page_umrah_guide",
   "/hajj-guide": "page_hajj_guide",
+  "/calculator": "page_calculator",
   "/packages": "page_packages",
   "/membership": "page_membership",
   "/contact": "page_contact",
