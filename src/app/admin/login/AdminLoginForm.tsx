@@ -7,9 +7,15 @@ import { createClient } from "@/lib/supabase/client";
 const field =
   "mt-1.5 w-full rounded-xl border border-night-900/12 bg-white px-4 py-3 text-night-900 outline-none transition focus:border-gold-500 focus:ring-4 focus:ring-gold-500/15";
 
-/** `onSuccess` replaces the default jump to /admin (the calculator signs in without leaving the page). */
-export function AdminLoginForm({ onSuccess }: { onSuccess?: () => void }) {
+/**
+ * `onSuccess` replaces the default jump to /admin (the calculator signs in without leaving the page).
+ * `noAutofill`: the browser must not fill in a saved email/password (the calculator's ADMIN asks for them
+ * every time): the fields stay read-only until touched, which browsers never autofill.
+ */
+export function AdminLoginForm({ onSuccess, noAutofill = false }: { onSuccess?: () => void; noAutofill?: boolean }) {
   const router = useRouter();
+  const [guarded, setGuarded] = useState(noAutofill);
+  const guard = noAutofill ? { readOnly: guarded, onFocus: () => setGuarded(false), onPointerDown: () => setGuarded(false) } : {};
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,11 +56,11 @@ export function AdminLoginForm({ onSuccess }: { onSuccess?: () => void }) {
     <form onSubmit={onSubmit} className="mt-8 space-y-4">
       <label className="block text-sm font-medium">
         Email
-        <input name="email" type="email" autoComplete="username" required className={field} />
+        <input name="email" type="email" autoComplete={noAutofill ? "off" : "username"} required className={field} {...guard} />
       </label>
       <label className="block text-sm font-medium">
         Password
-        <input name="password" type="password" autoComplete="current-password" required className={field} />
+        <input name="password" type="password" autoComplete={noAutofill ? "new-password" : "current-password"} required className={field} {...guard} />
       </label>
       {error && (
         <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">

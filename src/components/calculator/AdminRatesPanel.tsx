@@ -19,6 +19,8 @@ type Props = {
 function AdminCode({ onUnlocked }: { onUnlocked: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState(false);
+  // read-only until touched, so the browser can't fill in a saved code: it is typed every time
+  const [guarded, setGuarded] = useState(true);
   const [pending, start] = useTransition();
   const submit = () =>
     start(async () => {
@@ -44,10 +46,13 @@ function AdminCode({ onUnlocked }: { onUnlocked: () => void }) {
       </label>
       <input
         id="calc-admin-code"
-        autoFocus
         type="password"
+        name="calc-admin-pin"
         inputMode="numeric"
-        autoComplete="off"
+        autoComplete="new-password"
+        readOnly={guarded}
+        onFocus={() => setGuarded(false)}
+        onPointerDown={() => setGuarded(false)}
         maxLength={6}
         value={code}
         onChange={(e) => {
@@ -106,7 +111,7 @@ export function AdminRatesPanel({ unlocked, onUnlocked, isAdmin, onAdmin, onSync
         ) : (
           <div className="rounded-2xl bg-ivory-50 p-6 text-night-900">
             <h2 className="font-display text-3xl">Admin login</h2>
-            <AdminLoginForm onSuccess={() => onAdmin(true)} />
+            <AdminLoginForm noAutofill onSuccess={() => onAdmin(true)} />
           </div>
         )}
       </div>
