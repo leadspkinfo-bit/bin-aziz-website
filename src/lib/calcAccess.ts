@@ -35,10 +35,12 @@ export async function grantCalculatorAccess() {
 /*
  * The calculator's ADMIN button (rate scans, saving quotations) has its own 6-digit code, env
  * CALCULATOR_ADMIN_CODE, so the calculator code alone never opens it — not even in a browser that is
- * signed in as a site admin. It is checked on the server and remembered in its own cookie for 2 hours.
+ * signed in as a site admin. It is checked on the server and kept in its own cookie only while the ADMIN
+ * panel is in use (user request 2026-11-05): closing the panel, going back, reloading or leaving the page
+ * locks it again (see Calculator.tsx); 30 minutes is only a safety net for a tab left open.
  */
 const ADMIN_COOKIE = "calc_admin";
-const ADMIN_MAX_AGE = 60 * 60 * 2;
+const ADMIN_MAX_AGE = 60 * 30;
 const adminToken = (code: string) => createHmac("sha256", code).update("bin-aziz-calculator-admin").digest("hex");
 
 export function checkAdminCode(code: string) {

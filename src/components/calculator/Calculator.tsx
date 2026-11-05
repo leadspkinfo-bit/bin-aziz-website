@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useDialogs } from "@/components/ui/Dialogs";
 import { BRAND, BRANCHES, STANDARD_RATES } from "@/lib/calc/constants";
 import type { PublicResult } from "@/lib/calc/quotations";
@@ -8,6 +8,7 @@ import type { RateCatalog } from "@/lib/calc/rates";
 import { sortPeriods } from "@/lib/calc/seasons";
 import type { CalcSections } from "@/lib/settings";
 import { createClient } from "@/lib/supabase/client";
+import { lockCalculatorAdmin } from "@/app/(site)/calculator/actions";
 import { AdminRatesPanel } from "./AdminRatesPanel";
 import { cityPeriods, newPackage, packagePeriods, reducer, toPayload } from "./calcState";
 import { PdfPreview, whatsappMessage, whatsappNumber, WhatsappPreview } from "./ShareTools";
@@ -26,7 +27,11 @@ function Spinner() {
 }
 
 /** `sections`: which parts of the page the admin has switched on (/admin1998). */
-/** `adminUnlocked`: the ADMIN code was entered (server cookie); only then do the scan panel and Save show. */
+/**
+ * `adminUnlocked`: the ADMIN code was entered (server cookie); only then do the scan panel and Save show.
+ * ADMIN never outlives the panel (user request 2026-11-05): closing it logs out, and a fresh load, a
+ * back/forward visit or leaving the page locks the code again.
+ */
 /** `spos`: the names for "Prepared By" (admin list); every WhatsApp send / PDF download is logged against one. */
 export function Calculator({ sections, adminUnlocked: unlockedAtLoad, spos }: { sections: CalcSections; adminUnlocked: boolean; spos: Spo[] }) {
   const { notify } = useDialogs();
@@ -40,7 +45,8 @@ export function Calculator({ sections, adminUnlocked: unlockedAtLoad, spos }: { 
   const [errors, setErrors] = useState<string[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
-  const [adminUnlocked, setAdminUnlocked] = useState(unlockedAtLoad);
+  // every page load starts locked; a cookie left from an earlier visit is cleared below
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
 
   const loadRates = useCallback(
     () =>
@@ -63,6 +69,35 @@ export function Calculator({ sections, adminUnlocked: unlockedAtLoad, spos }: { 
       .rpc("is_admin")
       .then(({ data }) => setIsAdmin(Boolean(data)));
   }, [loadRates]);
+
+  // ADMIN lasts only while the panel is open on this page: came back, reloaded or left → locked
+  // read once: unlocking re-renders the page from the server with adminUnlocked=true, which must not lock it
+  const cookieAtLoad = useRef(unlockedAtLoad);
+  useEffect(() => {
+    if (cookieAtLoad.current) void lockCalculatorAdmin();
+    const leave = () => navigator.sendBeacon("/api/calculator/lock");
+    const back = (e: PageTransitionEvent) => {
+      if (!e.persisted) return; // restored from the back/forward cache
+      setAdminUnlocked(false);
+      setAdminOpen(false);
+      void lockCalculatorAdmin();
+    };
+    window.addEventListener("pagehide", leave);
+    window.addEventListener("pageshow", back);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", back);
+    };
+  }, []);
+
+  /** ✕ / Esc on the ADMIN panel: a full log out — admin code and admin login. */
+  const closeAdmin = () => {
+    setAdminOpen(false);
+    if (!adminUnlocked && !isAdmin) return;
+    setAdminUnlocked(false);
+    setIsAdmin(false);
+    void Promise.all([lockCalculatorAdmin(), createClient().auth.signOut()]);
+  };
 
   const periods = useMemo(() => ({ makkah: cityPeriods(rates?.hotels.makkah ?? {}), madina: cityPeriods(rates?.hotels.madina ?? {}) }), [rates]);
 
@@ -356,7 +391,7 @@ export function Calculator({ sections, adminUnlocked: unlockedAtLoad, spos }: { 
           isAdmin={isAdmin}
           onAdmin={setIsAdmin}
           onSynced={loadRates}
-          onClose={() => setAdminOpen(false)}
+          onClose={closeAdmin}
         />
       )}
 
