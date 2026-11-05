@@ -50,7 +50,9 @@ export function SpoManager({ spos }: { spos: Row[] }) {
       <ul className="mt-4 grid gap-2 sm:grid-cols-2">
         {active.map((s) => (
           <li key={s.id} className="flex items-center justify-between gap-2 rounded-xl border border-ivory-100/10 px-3 py-2 text-sm">
-            <span className="min-w-0 truncate">{s.name}</span>
+            <a href={`/admin/spos/${s.id}`} className="min-w-0 truncate hover:text-gold-300 hover:underline">
+              {s.name}
+            </a>
             <button
               type="button"
               disabled={pending}
@@ -72,7 +74,9 @@ export function SpoManager({ spos }: { spos: Row[] }) {
           <ul className="mt-2 grid gap-2 sm:grid-cols-2">
             {removed.map((s) => (
               <li key={s.id} className="flex items-center justify-between gap-2 rounded-xl border border-ivory-100/10 px-3 py-2 text-ivory-100/60">
-                <span className="min-w-0 truncate line-through">{s.name}</span>
+                <a href={`/admin/spos/${s.id}`} className="min-w-0 truncate line-through hover:text-gold-300">
+                  {s.name}
+                </a>
                 <button type="button" disabled={pending} onClick={() => run(() => setSpoActive(s.id, true), `${s.name} is back on the list.`)} className="shrink-0 rounded-full border border-ivory-100/20 px-3 py-1 text-xs hover:border-gold-400">
                   Restore
                 </button>

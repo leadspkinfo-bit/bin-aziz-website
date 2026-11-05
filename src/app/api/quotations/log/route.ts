@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { hasCalculatorAccess } from "@/lib/calcAccess";
+import { logDetails } from "@/lib/calc/logDetails";
 import { priceQuotation } from "@/lib/calc/quotations";
 import { quotationSchema } from "@/lib/calc/schema";
 import { tripStays } from "@/lib/calc/trip";
@@ -48,7 +49,8 @@ export async function POST(request: Request) {
     package_count: result.packages.length,
     summary,
     grand_total: result.grandTotal,
-    packages_json: q.packages,
+    // every package priced and readable (hotels in trip order, prices, the hidden markup) for the admin
+    packages_json: logDetails(result, q.packages),
   });
   if (error) {
     console.error("quotation log failed:", error);

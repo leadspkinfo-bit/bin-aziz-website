@@ -1,6 +1,7 @@
 import { AdminPage } from "../rates/AdminPage";
 import { adminButton, adminInput } from "../rates/styles";
 import { SpoManager } from "./SpoManager";
+import { PERIODS, periodMarks, periodRange, pkr, spoKey, when } from "./time";
 
 type Search = { spo?: string; period?: string; from?: string; to?: string };
 type LogRow = {
@@ -16,38 +17,6 @@ type LogRow = {
   grand_total: number;
   created_at: string;
 };
-
-// Pakistan time is UTC+5 all year (no daylight saving): days, weeks and months are counted in it
-const PKT = 5 * 3_600_000;
-const DAY = 86_400_000;
-const startOfDay = (t: number) => Math.floor((t + PKT) / DAY) * DAY - PKT;
-const startOfWeek = (t: number) => {
-  const day = startOfDay(t);
-  const weekday = (new Date(day + PKT).getUTCDay() + 6) % 7; // Monday = 0
-  return day - weekday * DAY;
-};
-const startOfMonth = (t: number) => {
-  const d = new Date(t + PKT);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) - PKT;
-};
-/** Where today, this week (Monday) and this month began, Pakistan time; read per request. */
-function periodMarks() {
-  const now = Date.now();
-  return { today: startOfDay(now), week: startOfWeek(now), month: startOfMonth(now) };
-}
-const dayParam = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? Date.parse(`${v}T00:00:00Z`) - PKT : null);
-
-const PERIODS = [
-  ["today", "Today"],
-  ["week", "This week"],
-  ["month", "This month"],
-  ["all", "All time"],
-  ["custom", "Dates…"],
-] as const;
-
-const pkr = (n: number) => `PKR ${Math.round(n).toLocaleString("en-US")}`;
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", { timeZone: "Asia/Karachi", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 
 /** Every row of the log, newest first (paged past Supabase's 1000-row limit). */
 async function allRows(supabase: Parameters<Parameters<typeof AdminPage>[0]["render"]>[0]) {
@@ -86,7 +55,7 @@ export default function Page({ searchParams }: { searchParams: Promise<Search> }
         const board = new Map<string, { name: string; active: boolean; today: number; week: number; month: number; all: number; monthTotal: number }>();
         for (const s of spos) board.set(s.id, { name: s.name, active: s.active, today: 0, week: 0, month: 0, all: 0, monthTotal: 0 });
         for (const r of rows) {
-          const key = r.spo_id ?? `name:${r.spo_name}`;
+          const key = spoKey(r.spo_id, r.spo_name);
           if (!board.has(key)) board.set(key, { name: r.spo_name, active: false, today: 0, week: 0, month: 0, all: 0, monthTotal: 0 });
           const b = board.get(key)!;
           const t = Date.parse(r.created_at);
@@ -102,13 +71,7 @@ export default function Page({ searchParams }: { searchParams: Promise<Search> }
 
         // the filtered list
         const period = PERIODS.some(([k]) => k === sp.period) ? sp.period! : "month";
-        let from = period === "today" ? marks.today : period === "week" ? marks.week : period === "month" ? marks.month : -Infinity;
-        let to = Infinity;
-        if (period === "custom") {
-          from = dayParam(sp.from) ?? -Infinity;
-          const end = dayParam(sp.to);
-          to = end === null ? Infinity : end + DAY;
-        }
+        const [from, to] = periodRange(period, marks, sp.from, sp.to);
         const list = rows.filter((r) => {
           const t = Date.parse(r.created_at);
           return t >= from && t < to && (!sp.spo || r.spo_id === sp.spo || `name:${r.spo_name}` === sp.spo);
@@ -137,7 +100,7 @@ export default function Page({ searchParams }: { searchParams: Promise<Search> }
                     {leaders.map(([key, b], i) => (
                       <tr key={key} className="border-t border-ivory-100/10">
                         <td className="px-3 py-2">
-                          <a href={`?spo=${encodeURIComponent(key)}&period=month`} className="underline-offset-2 hover:text-gold-300 hover:underline">
+                          <a href={`/admin/spos/${encodeURIComponent(key)}`} className="underline-offset-2 hover:text-gold-300 hover:underline">
                             {i === 0 && b.month > 0 ? "★ " : ""}
                             {b.name}
                           </a>
@@ -212,7 +175,10 @@ export default function Page({ searchParams }: { searchParams: Promise<Search> }
                   <li key={r.id} className="rounded-2xl border border-ivory-100/10 px-4 py-3 text-sm">
                     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                       <p className="font-semibold">
-                        {r.spo_name} <span className="font-normal text-ivory-100/50">· {when(r.created_at)}</span>
+                        <a href={`/admin/spos/${encodeURIComponent(spoKey(r.spo_id, r.spo_name))}`} className="hover:text-gold-300 hover:underline">
+                          {r.spo_name}
+                        </a>{" "}
+                        <span className="font-normal text-ivory-100/50">· {when(r.created_at)}</span>
                       </p>
                       <p className="font-semibold text-gold-300 tabular-nums">{pkr(Number(r.grand_total))}</p>
                     </div>

@@ -3,25 +3,59 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RateHotel } from "@/lib/calc/engine";
-import { SEASONS, seasonOf, type Season } from "@/lib/calc/seasons";
+import { parseRange, periodLabel, SEASONS, seasonOf, sortPeriods, type Season } from "@/lib/calc/seasons";
 
-// the tag text in the list (the user's wording: 2nd / 3rd Ashra)
-const TAG: Record<Season, string> = {
+// short season names for the tags (the user's wording: 2nd / 3rd Ashra)
+const SHORT: Record<Season, string> = {
   "Before Ramadan": "Before Ramadan",
-  "1st Ashra Ramadan": "1st Ashra Ramadan",
-  "Mid Ashra Ramadan": "2nd Ashra Ramadan",
-  "Last Ashra Ramadan": "3rd Ashra Ramadan",
+  "1st Ashra Ramadan": "1st",
+  "Mid Ashra Ramadan": "2nd",
+  "Last Ashra Ramadan": "3rd",
   Shawwal: "Shawwal",
 };
+const ASHRAS: Season[] = ["1st Ashra Ramadan", "Mid Ashra Ramadan", "Last Ashra Ramadan"];
 
-/** The seasons a hotel has any rate for, in season order (availability only — never a price). */
-export function hotelSeasons(hotel: RateHotel): Season[] {
-  const found = new Set<Season>();
-  for (const [period, rooms] of Object.entries(hotel.rates)) {
-    const s = seasonOf(period);
-    if (s && Object.values(rooms).some((v) => (v ?? 0) > 0)) found.add(s);
+const day = (ms: number, withMonth = true) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", ...(withMonth ? { month: "short" } : {}), timeZone: "UTC" });
+
+/** "10 DEC TILL 06 FEB" → "10 Dec–6 Feb", "06 FEB TILL 27 FEB" → "6–27 Feb", "CHECKOUT TILL 10 DEC" → "till 10 Dec". */
+export function shortDates(label: string) {
+  const range = label ? parseRange(label) : null;
+  if (!range) return "";
+  const [a, b] = range;
+  if (a === b) return /till|until|upto|up to|check\s*-?out/i.test(label) ? `till ${day(b)}` : day(a);
+  const sameMonth = new Date(a).getUTCMonth() === new Date(b).getUTCMonth();
+  return `${day(a, !sameMonth)}–${day(b)}`;
+}
+
+/** "1st & 2nd Ashra", "1st, 2nd & 3rd Ashra", "Before Ramadan", "Shawwal". */
+function seasonNames(seasons: Season[]) {
+  const ashras = seasons.filter((s) => ASHRAS.includes(s)).map((s) => SHORT[s]);
+  const others = seasons.filter((s) => !ASHRAS.includes(s)).map((s) => SHORT[s]);
+  const a = ashras.length ? `${ashras.length > 1 ? `${ashras.slice(0, -1).join(", ")} & ${ashras.at(-1)}` : ashras[0]} Ashra` : "";
+  return [...others, a].filter(Boolean).join(" · ");
+}
+
+/**
+ * One tag per rate a hotel has, with its dates: "Before Ramadan · till 10 Dec", "Before Ramadan · 10 Dec–6 Feb",
+ * "1st & 2nd Ashra · 6–27 Feb". Ashras that share one printed date range (one rate) share one tag.
+ * Availability only — never a price.
+ */
+export function hotelRateTags(hotel: RateHotel): string[] {
+  const periods = sortPeriods(Object.entries(hotel.rates).filter(([, rooms]) => Object.values(rooms).some((v) => (v ?? 0) > 0)).map(([p]) => p));
+  const groups = new Map<string, Season[]>();
+  for (const p of periods) {
+    const s = seasonOf(p);
+    if (!s) continue;
+    const dates = shortDates(periodLabel(p));
+    // Ramadan Ashras printed under one heading share their dates; other seasons stay apart
+    const key = ASHRAS.includes(s) && dates ? `ashra|${dates}` : `${s}|${dates}`;
+    groups.set(key, [...(groups.get(key) ?? []), s]);
   }
-  return SEASONS.filter((s) => found.has(s));
+  return [...groups].map(([key, seasons]) => {
+    const dates = key.slice(key.indexOf("|") + 1);
+    const names = seasonNames(SEASONS.filter((s) => seasons.includes(s)));
+    return dates ? `${names} · ${dates}` : names;
+  });
 }
 
 type Props = {
@@ -32,9 +66,8 @@ type Props = {
 };
 
 /**
- * Hotel dropdown. Inside the open list every hotel carries small tags for the seasons it has rates in
- * ("MELLA 1 — [1st Ashra Ramadan] [2nd Ashra Ramadan] …"), so two hotels with nearly the same name can be
- * told apart; the closed box shows only the clean hotel name. Type to search; arrows, Enter and Esc work.
+ * Hotel dropdown. Inside the open list every hotel carries small tags for each rate it has, with the
+ * dates ("Before Ramadan · 10 Dec–6 Feb", "1st & 2nd Ashra · 6–27 Feb"), since rates change every few days; the closed box shows only the clean hotel name. Type to search; arrows, Enter and Esc work.
  */
 export function HotelPicker({ label, value, hotels, onChange }: Props) {
   const id = useId();
@@ -46,10 +79,10 @@ export function HotelPicker({ label, value, hotels, onChange }: Props) {
   const [box, setBox] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null);
 
   const options = Object.entries(hotels)
-    .map(([hid, h]) => ({ id: hid, name: h.name, seasons: hotelSeasons(h) }))
+    .map(([hid, h]) => ({ id: hid, name: h.name, tags: hotelRateTags(h) }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const q = query.trim().toLowerCase();
-  const shown = q ? options.filter((o) => o.name.toLowerCase().includes(q) || o.seasons.some((s) => TAG[s].toLowerCase().includes(q))) : options;
+  const shown = q ? options.filter((o) => o.name.toLowerCase().includes(q) || o.tags.some((t) => t.toLowerCase().includes(q))) : options;
   const selected = hotels[value];
 
   // the list is portalled to <body> (the package card clips overflow) and placed under the box,
@@ -176,12 +209,16 @@ export function HotelPicker({ label, value, hotels, onChange }: Props) {
                 >
                   <span className="block">{o.name}</span>
                   <span className="mt-1 flex flex-wrap gap-1">
-                    {o.seasons.length === 0 && <span className="text-[10px] text-slate-400">no rates yet</span>}
-                    {o.seasons.map((s) => (
-                      <span key={s} className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-px text-[10px] font-medium text-slate-500">
-                        {TAG[s]}
-                      </span>
-                    ))}
+                    {o.tags.length === 0 && <span className="text-[10px] text-slate-400">no rates yet</span>}
+                    {o.tags.map((t) => {
+                      const [names, dates] = t.split(" · ").length > 1 ? [t.slice(0, t.lastIndexOf(" · ")), t.slice(t.lastIndexOf(" · ") + 3)] : [t, ""];
+                      return (
+                        <span key={t} className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-px text-[10px] font-medium whitespace-nowrap text-slate-500">
+                          {names}
+                          {dates && <span className="font-semibold text-[#044064]"> · {dates}</span>}
+                        </span>
+                      );
+                    })}
                   </span>
                 </li>
               ))}
