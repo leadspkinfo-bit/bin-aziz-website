@@ -28,7 +28,7 @@ export const BRAND = {
   address: "Office M1-M2-M3, 1st Floor, Abbas Trade Center, Main PIA Road, Lahore",
 };
 
-export const BRANCHES = ["HEAD OFFICE (Lahore)", "LAHORE CITY", "LAYYAH", "LAYYAH CITY", "KHUSHAB"];
+export const BRANCHES = ["HEAD OFFICE (Lahore)", "LAHORE CITY", "CHINIOT", "LAYYAH CITY", "KHUSHAB"];
 
 export const AIRLINES = [
   "NONE",
