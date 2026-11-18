@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMultiPackage, computePackageTotal, getRoomCapacity, getVisaRate, missingRates, rateSeason, type PackageInput, type RatesData } from "@/lib/calc/engine";
+import { computeMultiPackage, computePackageTotal, getRoomCapacity, getVisaRate, missingRates, rateSeason, stayPeriods, type PackageInput, type RatesData } from "@/lib/calc/engine";
 import { parseRange, periodLabel, periodName, seasonOf, seasonsForPeriod, sortPeriods } from "@/lib/calc/seasons";
 import { newPackage, newStay, reducer, resolvePeriod, stayDates, stayNights, toPayload } from "@/components/calculator/calcState";
 import { periodWindow, seasonWindow } from "@/lib/calc/seasons";
@@ -682,5 +682,57 @@ describe("extra Profit typed on the calculator", () => {
     const plain = computeMultiPackage([pkg()], data).grandTotal;
     expect(computeMultiPackage([pkg(-500)], data).grandTotal).toBe(plain);
     expect(computeMultiPackage([pkg(undefined)], data).grandTotal).toBe(plain);
+  });
+});
+
+describe("each night priced on the rate period its date falls in", () => {
+  // Meezab 1448H list, published 17 Nov 2026 (double = room rate ÷ 2)
+  const B = "Before Ramadan";
+  const P1 = `${B} — CHECKOUT TILL 30 NOV`;
+  const P2 = `${B} — 30 NOV TILL 20 DEC`;
+  const P3 = `${B} — 20 DEC TILL 06 FEB`;
+  const now = Date.parse("2026-11-18T00:00:00Z");
+  const rates: RatesData = {
+    hotels: {
+      makkah: { k: { name: "AL KISWAH TOWERS", location: "-", rates: { [P1]: { double: 62.5 }, [P2]: { double: 62.5 }, [P3]: { double: 85 } } } },
+      madina: { b: { name: "BURJ MUKHTARA", location: "-", rates: { [P1]: { double: 150 }, [P2]: { double: 145 }, [P3]: { double: 200 } } } },
+    },
+    visa: { bus: { 47: 550 }, private: {} },
+    dynamicProfit: 20000,
+    periods: [P1, P2, P3],
+    ziyarat: { makkah: 10, madina: 10 },
+    sarToPkr: 76,
+  };
+  const stay = (hotelId: string, from: string, nights: number, season: string) => ({ hotelId, room: "double" as const, nights, season, from });
+
+  it("splits 17–22 Dec into 3 nights of the 30 Nov rate and 2 of the 20 Dec rate", () => {
+    const segs = stayPeriods(rates.hotels.madina.b, stay("b", "2026-12-17", 5, P2), undefined, now);
+    expect(segs.map((s) => [s.period, s.nights])).toEqual([
+      [P2, 3],
+      [P3, 2],
+    ]);
+  });
+
+  it("prices the manual package exactly: 353,850 per person + ziyarat", () => {
+    const vi_now = Date.now;
+    Date.now = () => now;
+    try {
+      const r = computeMultiPackage([
+        pkg({
+          season: undefined,
+          ziyarat: { makkah: true, madina: true, adults: 0, children: 0, included: true },
+          ticketPrice: 179000,
+          adults: 2,
+          makkahList: [stay("k", "2026-12-12", 5, P2), stay("k", "2026-12-22", 4, P3)],
+          madinaList: [stay("b", "2026-12-17", 5, P2)],
+        }),
+      ], rates).packages[0];
+      expect(r.hotelCostSAR).toBe(312.5 + 435 + 400 + 340);
+      // + the ziyarat the calculator folds in (10 + 10 SAR × 76 = 1,520; quote says "Free Ziyarat Included")
+      expect(r.perAdultPrice).toBe(353850 + 1520);
+      expect(missingRates({ makkahList: [stay("k", "2026-12-12", 5, P2)], madinaList: [stay("b", "2026-12-17", 5, P2)] }, rates)).toEqual([]);
+    } finally {
+      Date.now = vi_now;
+    }
   });
 });

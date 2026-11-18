@@ -1,5 +1,5 @@
 import { INFANT_PRICE_PKR, ROOM_CAPACITY, STANDARD_RATES, type RoomType } from "./constants";
-import { seasonOf, sortPeriods } from "./seasons";
+import { periodLabel, periodWindow, seasonOf, sortPeriods } from "./seasons";
 
 // Pure port of the Apps Script calculator: no database calls, same rounding, same fallbacks.
 
@@ -90,6 +90,40 @@ export function rateSeason(hotel: RateHotel, season: string | undefined) {
   return (group && own.find((p) => seasonOf(p) === group)) || own[0];
 }
 
+const NIGHT = 86_400_000;
+
+/** One run of nights of a stay priced on one rate period; `dated` = the period's printed dates cover these nights. */
+export type StaySegment = { period: string | undefined; nights: number; dated: boolean };
+
+/**
+ * The rate period of every night of a stay, by date (user request 2026-11-18): a stay of 17–22 Dec over
+ * "30 NOV TILL 20 DEC" and "20 DEC TILL 06 FEB" pays the first rate for the nights of 17–19 Dec and the
+ * second for 20–21 Dec. Only the dated periods of the stay's own season are looked at; a night two
+ * periods share (the "20 DEC" in both headings) goes to the later one — the earlier one's "till" is the
+ * check-out day. A night no dated period covers, or a stay without a check-in date, uses `rateSeason`.
+ */
+export function stayPeriods(hotel: RateHotel, entry: Pick<HotelEntry, "season" | "from" | "nights">, season?: string, now = Date.now()): StaySegment[] {
+  const base = rateSeason(hotel, entry.season || season);
+  const nights = Math.trunc(Number(entry.nights)) || 0;
+  const start = entry.from ? Date.parse(`${entry.from}T00:00:00Z`) : NaN;
+  if (!base || !Number.isFinite(start) || nights <= 0) return [{ period: base, nights, dated: false }];
+  const group = seasonOf(base);
+  const windows = Object.keys(hotel.rates)
+    .filter((p) => periodLabel(p) && seasonOf(p) === group)
+    .map((p) => ({ p, w: periodWindow(p, now) }));
+  const out: StaySegment[] = [];
+  for (let i = 0; i < nights; i++) {
+    const night = start + i * NIGHT;
+    const covering = windows.filter(({ w }) => night >= w[0] && night <= w[1]).sort((a, b) => b.w[0] - a.w[0] || a.w[1] - b.w[1]);
+    const period = covering[0]?.p ?? base;
+    const dated = Boolean(covering[0]);
+    const last = out[out.length - 1];
+    if (last && last.period === period && last.dated === dated) last.nights++;
+    else out.push({ period, nights: 1, dated });
+  }
+  return out;
+}
+
 /**
  * Hotel rows that cannot be priced: the room is N/A in the period they use, or the hotel has no rate at
  * all in the chosen season (a season with nothing uploaded is never priced with another season's rate).
@@ -109,11 +143,12 @@ export function missingRates(pkg: Pick<PackageInput, "makkahList" | "madinaList"
         continue;
       }
       const chosen = h.season || pkg.season;
-      const used = rateSeason(hotel, chosen);
       const room = h.room || "sharing";
       const wanted = chosen ? seasonOf(chosen) : null;
-      if (used && wanted && seasonOf(used) !== wanted) out.push(`${hotel.name} has no ${wanted} rates yet`);
-      else if (!used || !((hotel.rates[used]?.[room] ?? 0) > 0)) out.push(`${hotel.name} has no ${room.toUpperCase()} rate${used ? ` in ${used}` : ""}`);
+      for (const { period: used } of stayPeriods(hotel, h, pkg.season)) {
+        if (used && wanted && seasonOf(used) !== wanted) out.push(`${hotel.name} has no ${wanted} rates yet`);
+        else if (!used || !((hotel.rates[used]?.[room] ?? 0) > 0)) out.push(`${hotel.name} has no ${room.toUpperCase()} rate${used ? ` in ${used}` : ""}`);
+      }
     }
   }
   return out;
@@ -145,15 +180,16 @@ function hotelNights(list: HotelEntry[] | undefined, hotels: Record<string, Rate
   for (const h of list ?? []) {
     const hotel = h.hotelId ? hotels[h.hotelId] : undefined;
     if (!hotel) continue;
-    const used = rateSeason(hotel, h.season || season);
-    const rates = used ? hotel.rates[used] : undefined;
-    if (!rates) continue;
+    // each night on the rate period its date falls in
+    const segments = stayPeriods(hotel, h, season).filter((g) => g.period && hotel.rates[g.period]);
+    if (!segments.length) continue;
     const room = h.room || "sharing";
-    const n = Math.trunc(Number(h.nights)) || 0;
-    sar += (rates[room] || 0) * n;
+    const n = segments.reduce((sum, g) => sum + g.nights, 0);
+    sar += segments.reduce((sum, g) => sum + (hotel.rates[g.period!][room] || 0) * g.nights, 0);
     nights += n;
     capacity = Math.max(capacity, getRoomCapacity(room));
-    details.push({ name: hotel.name, room: room.toUpperCase(), nights: n, location: hotel.location || "-", season: used!, ...(h.dates ? { dates: h.dates } : {}), ...(h.from ? { from: h.from } : {}) });
+    const used = [...new Set(segments.map((g) => g.period!))].join(" + ");
+    details.push({ name: hotel.name, room: room.toUpperCase(), nights: n, location: hotel.location || "-", season: used, ...(h.dates ? { dates: h.dates } : {}), ...(h.from ? { from: h.from } : {}) });
   }
   return { sar, nights, capacity, details };
 }

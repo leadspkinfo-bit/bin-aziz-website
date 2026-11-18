@@ -2,7 +2,7 @@
 
 import { useId, useState, type ActionDispatch, type ReactNode } from "react";
 import { AIRLINES, ROOM_TYPES, type RoomType } from "@/lib/calc/constants";
-import { rateSeason, type RateHotel } from "@/lib/calc/engine";
+import { stayPeriods, type RateHotel } from "@/lib/calc/engine";
 import type { PublicResult } from "@/lib/calc/quotations";
 import { periodLabel, SEASONS, seasonOf } from "@/lib/calc/seasons";
 import type { CalcSections } from "@/lib/settings";
@@ -63,13 +63,13 @@ const chipName = (period: string) => {
  * Only a warning when something is wrong (no rates, room N/A, other dates used) — never a rate:
  * prices stay on the server and appear only as the package total and in the quotation.
  */
-function rateWarning(hotel: RateHotel, room: RoomType, period: string): { text: string; red: boolean } | null {
-  const used = rateSeason(hotel, period);
+function rateWarning(hotel: RateHotel, room: RoomType, period: string, used: string | undefined, dated: boolean): { text: string; red: boolean } | null {
   const rate = used ? hotel.rates[used]?.[room] : undefined;
   if (!used) return { text: "this hotel is not available yet", red: true };
   if (seasonOf(used) !== seasonOf(period)) return { text: `no ${seasonOf(period) ?? period} rates for this hotel yet`, red: true };
   if (!rate) return { text: `${room.toUpperCase()} is not available — please choose another room`, red: true };
-  if (used !== period) return { text: `not available for ${barLabel(period)} — ${barLabel(used)} is used`, red: false };
+  // a dated rate the stay's own nights fall in is the right one, not a substitute
+  if (used !== period && !dated) return { text: `not available for ${barLabel(period)} — ${barLabel(used)} is used`, red: false };
   return null;
 }
 
@@ -114,16 +114,19 @@ function HotelRows({
         const used = new Set(row.stays.map((s) => seasonOf(s.season)));
         const warnings = hotel
           ? row.stays.flatMap((s) => {
-              const w = rateWarning(hotel, row.room, resolvePeriod(s.season, periods));
-              return w ? [{ ...w, text: `${chipName(s.season)}: ${w.text}` }] : [];
+              const period = resolvePeriod(s.season, periods);
+              return stayPeriods(hotel, { season: period, from: s.from, nights: stayNights(s) }).flatMap((g) => {
+                const w = rateWarning(hotel, row.room, period, g.period, g.dated);
+                return w ? [{ ...w, text: `${chipName(s.season)}: ${w.text}` }] : [];
+              });
             })
           : [];
         const na = (r: RoomType) =>
           Boolean(
             hotel &&
               row.stays.some((s) => {
-                const p = rateSeason(hotel, resolvePeriod(s.season, periods));
-                return p && !((hotel.rates[p]?.[r] ?? 0) > 0);
+                const segments = stayPeriods(hotel, { season: resolvePeriod(s.season, periods), from: s.from, nights: stayNights(s) });
+                return segments.some((g) => g.period && !((hotel.rates[g.period]?.[r] ?? 0) > 0));
               }),
           );
         return (
