@@ -836,3 +836,34 @@ describe("rate periods whose dates are over", () => {
     expect(isExpiredPeriod("1st Ashra Ramadan — General", on("2027-06-01"))).toBe(false);
   });
 });
+
+describe("calendar colour blocks", () => {
+  const P = (s: string) => s;
+  const hotel = {
+    name: "MELLA 2",
+    location: "-",
+    rates: {
+      [P("Before Ramadan — 20 DEC TILL 06 FEB")]: { double: 1 },
+      [P("1st Ashra Ramadan — (1st & 2nd Ashra Ramadan) 06 FEB TILL 27 FEB")]: { double: 1 },
+      [P("Mid Ashra Ramadan — (1st & 2nd Ashra Ramadan) 06 FEB TILL 27 FEB")]: { double: 1 },
+      [P("Last Ashra Ramadan — (Last Ashra Ramadan) 27 FEB TILL 11 MAR")]: { double: 1 },
+      [P("Shawwal — (Shawwal) 11 MAR TILL 29 MAR")]: { double: 1 },
+    },
+  };
+  const now = Date.parse("2026-11-23T00:00:00Z");
+  const d = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+
+  it("one block per printed range: 1st & 2nd Ashra together are one colour", async () => {
+    const { hotelBands } = await import("@/components/calculator/rateBands");
+    expect(hotelBands(hotel, now).map((b) => b.name)).toEqual(["20 Dec – 06 Feb", "1st & 2nd Ashra", "Last Ashra", "Shawwal"]);
+  });
+
+  it("splits the user's two sectors over the blocks, night by night", async () => {
+    const { hotelBands, nightsByBand } = await import("@/components/calculator/rateBands");
+    const bands = hotelBands(hotel, now);
+    const split = (a: string, b: string) => nightsByBand(hotel, bands, d(a), d(b)).map((p) => `${p.nights} ${p.band?.name ?? "none"}`);
+    expect(split("2027-02-25", "2027-03-04")).toEqual(["2 1st & 2nd Ashra", "5 Last Ashra"]);
+    expect(split("2027-03-04", "2027-03-14")).toEqual(["7 Last Ashra", "3 Shawwal"]);
+    expect(split("2027-04-10", "2027-04-12")).toEqual(["2 none"]);
+  });
+});

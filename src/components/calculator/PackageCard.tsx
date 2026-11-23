@@ -8,6 +8,7 @@ import { periodLabel, SEASONS, seasonOf, staySeasons } from "@/lib/calc/seasons"
 import type { CalcSections } from "@/lib/settings";
 import { dayMs, newStay, periodsOf, resolvePeriod, rowNights, stayDates, stayNights, type Action, type City, type PackageState, type Stay, type StayRow } from "./calcState";
 import { HotelPicker } from "./HotelPicker";
+import { hotelBands, nightsByBand } from "./rateBands";
 import { StayCalendar } from "./StayCalendar";
 
 export const inputClass =
@@ -77,8 +78,16 @@ function rateWarning(hotel: RateHotel, room: RoomType, period: string, used: str
 }
 
 const stayParts = (s: Stay) => staySeasons(dayMs(s.from), dayMs(s.to));
-/** A chip's season text, by the nights' dates: "1st Ashra", or "1st Ashra 4N + Mid Ashra 3N" when it crosses. */
-const stayLabel = (s: Stay) => {
+/**
+ * A chip's text, by the nights' dates and the hotel's own rate blocks (as coloured in the calendar):
+ * "1st & 2nd Ashra", or "1st & 2nd Ashra 3N + Last Ashra 4N" when the stay runs over two rates.
+ */
+const stayLabel = (s: Stay, hotel?: RateHotel) => {
+  if (hotel) {
+    const bands = hotelBands(hotel);
+    const parts = nightsByBand(hotel, bands, dayMs(s.from), dayMs(s.to));
+    if (parts.length) return parts.length > 1 ? parts.map((p) => `${p.band?.name ?? "no rate"} ${p.nights}N`).join(" + ") : (parts[0].band?.name ?? "no rate");
+  }
   const parts = stayParts(s);
   return parts.length > 1 ? parts.map(([season, n]) => `${chipName(season)} ${n}N`).join(" + ") : chipName(parts[0]?.[0] ?? s.season);
 };
@@ -193,11 +202,11 @@ function HotelRows({
                         onClick={() => setOpen({ index, season: seasonOf(s.season) ?? s.season, stay: s })}
                         className="py-1.5 pr-1 pl-3 text-left whitespace-nowrap"
                       >
-                        <span className="font-bold text-[#8e1b34]">{stayLabel(s)}</span> · {stayDates(s)} · {stayNights(s)}N
+                        <span className="font-bold text-[#8e1b34]">{stayLabel(s, hotel)}</span> · {stayDates(s)} · {stayNights(s)}N
                       </button>
                       <button
                         type="button"
-                        aria-label={`Remove ${stayLabel(s)} ${stayDates(s)}`}
+                        aria-label={`Remove ${stayLabel(s, hotel)} ${stayDates(s)}`}
                         onClick={() => edit(index, { stays: row.stays.filter((x) => x.id !== s.id) })}
                         className="mr-1 grid size-6 place-items-center rounded-full text-[#8e1b34] hover:bg-[#8e1b34] hover:text-white"
                       >
@@ -221,6 +230,8 @@ function HotelRows({
       {open && rows[open.index] && (
         <StayCalendar
           season={open.season}
+          hotel={hotels[rows[open.index].hotelId]}
+          periods={periods}
           editing={open.stay}
           taken={rows[open.index].stays.filter((s) => s.id !== open.stay?.id).map((s) => [dayMs(s.from), dayMs(s.to)] as [number, number])}
           onClose={() => setOpen(null)}
