@@ -46,7 +46,7 @@ function Breakdown({ parts, small }: { parts: { band: Band | null; nights: numbe
       {parts.map((p, i) => (
         <li
           key={`${p.band?.key ?? "none"}-${i}`}
-          className={`rounded-full border px-2 py-0.5 font-semibold whitespace-nowrap ${small ? "text-[10px]" : "text-xs"} ${p.band ? p.band.tone.chip : "border-red-300 bg-red-50 text-red-700"}`}
+          className={`rounded-full border-2 px-2 py-0.5 font-semibold whitespace-nowrap ${small ? "text-[10px]" : "text-xs"} ${p.band ? p.band.tone.chip : "border-red-300 bg-red-50 text-red-700"}`}
         >
           {nightsText(p.nights)} · {p.band ? p.band.name : "no rate"}
         </li>
@@ -215,7 +215,7 @@ export function StayCalendar({ season, hotel, periods, editing, taken, onApply, 
                                 ? "text-slate-300"
                                 : used
                                   ? "text-slate-300 line-through"
-                                  : `${band ? `${band.tone.day} font-semibold` : "text-slate-400"} hover:ring-2 hover:ring-[#8e1b34]/50`
+                                  : `${band ? `${band.tone.day} font-semibold` : "text-slate-400"} ${between ? "ring-2 ring-[#8e1b34] ring-offset-1" : "hover:ring-2 hover:ring-[#8e1b34]/60"}`
                           }`}
                         >
                           {new Date(d).getUTCDate()}
@@ -235,8 +235,8 @@ export function StayCalendar({ season, hotel, periods, editing, taken, onApply, 
                 {bands
                   .filter((b) => b.to >= today)
                   .map((b) => (
-                    <button key={b.key} type="button" onClick={() => jump(b.from)} title="Show these dates" className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 ${b.tone.chip}`}>
-                      <span className={`size-2 rounded-full ${b.tone.dot}`} />
+                    <button key={b.key} type="button" onClick={() => jump(b.from)} title="Show these dates" className={`inline-flex items-center gap-1.5 rounded-full border-2 px-2 py-1 ${b.tone.chip}`}>
+                      <span className={`size-3 rounded-full ${b.tone.dot}`} />
                       <span className="font-semibold">{b.name}</span>
                       {/* a block named by its dates already shows them */}
                       {!/\d/.test(b.name) && (

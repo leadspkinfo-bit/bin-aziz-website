@@ -9,15 +9,17 @@ import { periodLabel, periodWindow, seasonOf, sortPeriods } from "@/lib/calc/sea
  */
 
 /** Tailwind classes written out in full (Tailwind only finds whole class names). */
+// strong, clearly different hues next to each other (user request 2026-11-23: the pale ones looked alike);
+// no red — check-in / check-out are maroon
 const TONES = [
-  { day: "bg-sky-100 text-sky-900", dot: "bg-sky-500", chip: "border-sky-300 bg-sky-50 text-sky-900" },
-  { day: "bg-teal-100 text-teal-900", dot: "bg-teal-500", chip: "border-teal-300 bg-teal-50 text-teal-900" },
-  { day: "bg-indigo-100 text-indigo-900", dot: "bg-indigo-500", chip: "border-indigo-300 bg-indigo-50 text-indigo-900" },
-  { day: "bg-emerald-100 text-emerald-900", dot: "bg-emerald-500", chip: "border-emerald-300 bg-emerald-50 text-emerald-900" },
-  { day: "bg-amber-100 text-amber-900", dot: "bg-amber-500", chip: "border-amber-300 bg-amber-50 text-amber-900" },
-  { day: "bg-violet-100 text-violet-900", dot: "bg-violet-500", chip: "border-violet-300 bg-violet-50 text-violet-900" },
-  { day: "bg-rose-100 text-rose-900", dot: "bg-rose-500", chip: "border-rose-300 bg-rose-50 text-rose-900" },
-  { day: "bg-orange-100 text-orange-900", dot: "bg-orange-500", chip: "border-orange-300 bg-orange-50 text-orange-900" },
+  { day: "bg-blue-600 text-white", dot: "bg-blue-600", chip: "border-blue-600 bg-blue-50 text-blue-800" },
+  { day: "bg-emerald-600 text-white", dot: "bg-emerald-600", chip: "border-emerald-600 bg-emerald-50 text-emerald-800" },
+  { day: "bg-orange-500 text-white", dot: "bg-orange-500", chip: "border-orange-500 bg-orange-50 text-orange-800" },
+  { day: "bg-purple-600 text-white", dot: "bg-purple-600", chip: "border-purple-600 bg-purple-50 text-purple-800" },
+  { day: "bg-yellow-400 text-slate-900", dot: "bg-yellow-400", chip: "border-yellow-500 bg-yellow-50 text-yellow-900" },
+  { day: "bg-cyan-500 text-white", dot: "bg-cyan-500", chip: "border-cyan-500 bg-cyan-50 text-cyan-800" },
+  { day: "bg-pink-500 text-white", dot: "bg-pink-500", chip: "border-pink-500 bg-pink-50 text-pink-800" },
+  { day: "bg-lime-500 text-slate-900", dot: "bg-lime-500", chip: "border-lime-600 bg-lime-50 text-lime-900" },
 ] as const;
 export type Tone = (typeof TONES)[number];
 
