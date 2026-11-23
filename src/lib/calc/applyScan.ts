@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoomType } from "./constants";
+import { isExpiredPeriod, isSeason } from "./seasons";
 import { mergeHotels, replaceSeasons, type NormalizedScan, type ScanHotel, type ScanRate } from "@/lib/gemini/normalize";
 
 type HotelRow = {
@@ -56,4 +57,26 @@ export async function applyScan(supabase: SupabaseClient, scan: NormalizedScan, 
     replacedSeasons: [...replaced],
     ziyaratUpdated: scan.ziyarat.makkah > 0 || scan.ziyarat.madina > 0,
   };
+}
+
+/**
+ * Deletes the rate periods whose dates are over, and dated periods no hotel has a rate for any more
+ * (their rates go with them: hotel_rates references seasons with on delete cascade). The five plain
+ * season rows stay. Runs after every save; returns the names removed.
+ */
+export async function removeExpiredPeriods(supabase: SupabaseClient, now = Date.now()) {
+  const { data: seasons, error } = await supabase.from("seasons").select("id, name");
+  if (error) throw error;
+  const used = new Set<string>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error: e } = await supabase.from("hotel_rates").select("season_id").order("id").range(from, from + 999);
+    if (e) throw e;
+    data.forEach((r) => used.add(r.season_id as string));
+    if (data.length < 1000) break;
+  }
+  const drop = (seasons ?? []).filter((s) => !isSeason(s.name) && (isExpiredPeriod(s.name, now) || !used.has(s.id)));
+  if (!drop.length) return [];
+  const { error: del } = await supabase.from("seasons").delete().in("id", drop.map((s) => s.id));
+  if (del) throw del;
+  return drop.map((s) => s.name as string);
 }

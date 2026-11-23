@@ -1,5 +1,5 @@
 import { INFANT_PRICE_PKR, ROOM_CAPACITY, STANDARD_RATES, type RoomType } from "./constants";
-import { periodLabel, periodWindow, seasonOf, sortPeriods } from "./seasons";
+import { periodLabel, periodWindow, SEASONS, seasonOf, seasonOn, sortPeriods, type Season } from "./seasons";
 
 // Pure port of the Apps Script calculator: no database calls, same rounding, same fallbacks.
 
@@ -92,37 +92,69 @@ export function rateSeason(hotel: RateHotel, season: string | undefined) {
 
 const NIGHT = 86_400_000;
 
-/** One run of nights of a stay priced on one rate period; `dated` = the period's printed dates cover these nights. */
-export type StaySegment = { period: string | undefined; nights: number; dated: boolean };
+/**
+ * One run of nights of a stay priced on one rate period. `season` = the season those nights belong to
+ * (by their dates); `dated` = a printed date range of the period covers them.
+ */
+export type StaySegment = { period: string | undefined; nights: number; dated: boolean; season: Season | null; night?: number };
+
+// a night just outside a printed range (moon-sighting / edge days) still takes the nearest range of its season
+const EDGE_DAYS = 3;
 
 /**
- * The rate period of every night of a stay, by date (user request 2026-11-18): a stay of 17–22 Dec over
- * "30 NOV TILL 20 DEC" and "20 DEC TILL 06 FEB" pays the first rate for the nights of 17–19 Dec and the
- * second for 20–21 Dec. Only the dated periods of the stay's own season are looked at; a night two
- * periods share (the "20 DEC" in both headings) goes to the later one — the earlier one's "till" is the
- * check-out day. A night no dated period covers, or a stay without a check-in date, uses `rateSeason`.
+ * The rate period of every night of a stay, BY DATE (user requests 2026-11-18 and 2026-11-23): the bar the
+ * calendar was opened from does not matter. A night takes the hotel's dated period whose printed range
+ * covers it — a night two ranges share (the "20 DEC" in "30 NOV TILL 20 DEC" and "20 DEC TILL 06 FEB")
+ * goes to the later one, the earlier one's "till" being the check-out day. A night no printed range
+ * covers takes its own season's (Ashra by the Ramadan table in seasons.ts) undated rate, else the nearest
+ * printed range of that season up to EDGE_DAYS away; further than that it has NO rate (`period`
+ * undefined, refused by `missingRates`) — never the oldest rate of the list, as it was until 2026-11-23
+ * (April nights were priced on "CHECKOUT TILL 30 NOV").
+ * So 1st Ashra + Mid Ashra nights in one stay pay each Ashra's own rate.
+ * Without a check-in date (older callers) the whole stay uses `rateSeason` of its chosen period.
  */
 export function stayPeriods(hotel: RateHotel, entry: Pick<HotelEntry, "season" | "from" | "nights">, season?: string, now = Date.now()): StaySegment[] {
-  const base = rateSeason(hotel, entry.season || season);
+  const chosen = entry.season || season;
   const nights = Math.trunc(Number(entry.nights)) || 0;
   const start = entry.from ? Date.parse(`${entry.from}T00:00:00Z`) : NaN;
-  if (!base || !Number.isFinite(start) || nights <= 0) return [{ period: base, nights, dated: false }];
-  const group = seasonOf(base);
+  if (!Number.isFinite(start) || nights <= 0) return [{ period: rateSeason(hotel, chosen), nights, dated: false, season: chosen ? seasonOf(chosen) : null }];
   const windows = Object.keys(hotel.rates)
-    .filter((p) => periodLabel(p) && seasonOf(p) === group)
+    .filter((p) => periodLabel(p) && seasonOf(p))
     .map((p) => ({ p, w: periodWindow(p, now) }));
   const out: StaySegment[] = [];
   for (let i = 0; i < nights; i++) {
     const night = start + i * NIGHT;
-    const covering = windows.filter(({ w }) => night >= w[0] && night <= w[1]).sort((a, b) => b.w[0] - a.w[0] || a.w[1] - b.w[1]);
-    const period = covering[0]?.p ?? base;
-    const dated = Boolean(covering[0]);
+    const own = seasonOn(night);
+    const covering = windows
+      .filter(({ w }) => night >= w[0] && night <= w[1])
+      // later start first; on a tie (one printed range stored under several Ashras) the season nearest the night's own
+      .sort((a, b) => b.w[0] - a.w[0] || nearness(a.p, own) - nearness(b.p, own) || a.w[1] - b.w[1]);
+    const hit = covering[0]?.p;
+    const seg = hit ? { period: hit, dated: true, season: seasonOf(hit) } : { period: nearestPeriod(hotel, own, night, windows), dated: false, season: own };
     const last = out[out.length - 1];
-    if (last && last.period === period && last.dated === dated) last.nights++;
-    else out.push({ period, nights: 1, dated });
+    if (last && last.period === seg.period && last.dated === seg.dated && last.season === seg.season) last.nights++;
+    else out.push({ ...seg, nights: 1, night });
   }
   return out;
 }
+
+const nearness = (period: string, own: Season) => Math.abs(SEASONS.indexOf(seasonOf(period) ?? own) - SEASONS.indexOf(own));
+
+/** A night no printed range covers: the season's undated rate, else its nearest printed range within EDGE_DAYS. */
+function nearestPeriod(hotel: RateHotel, season: Season, night: number, windows: { p: string; w: [number, number] }[]) {
+  if (hotel.rates[season]) return season;
+  const gap = (w: [number, number]) => (night < w[0] ? w[0] - night : night - w[1]) / NIGHT;
+  const near = windows
+    .filter(({ p }) => seasonOf(p) === season)
+    .map(({ p, w }) => ({ p, gap: gap(w) }))
+    .filter((x) => x.gap <= EDGE_DAYS)
+    .sort((a, b) => a.gap - b.gap)[0];
+  if (near) return near.p;
+  // the hotel has this season only as other undated rows (e.g. "1st Ashra Ramadan" while a Mid night): none
+  return undefined;
+}
+
+const shortDay = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 
 /**
  * Hotel rows that cannot be priced: the room is N/A in the period they use, or the hotel has no rate at
@@ -142,16 +174,19 @@ export function missingRates(pkg: Pick<PackageInput, "makkahList" | "madinaList"
         out.push(`a ${city} hotel is no longer in the rate list — please refresh the page and choose it again`);
         continue;
       }
-      const chosen = h.season || pkg.season;
       const room = h.room || "sharing";
-      const wanted = chosen ? seasonOf(chosen) : null;
-      for (const { period: used } of stayPeriods(hotel, h, pkg.season)) {
-        if (used && wanted && seasonOf(used) !== wanted) out.push(`${hotel.name} has no ${wanted} rates yet`);
+      for (const { period: used, season: wanted, night, nights } of stayPeriods(hotel, h, pkg.season)) {
+        // no rate of that season at all for this hotel: say so; else the dates the printed ranges miss
+        if (!used && wanted && !Object.keys(hotel.rates).some((p) => seasonOf(p) === wanted)) out.push(`${hotel.name} has no ${wanted} rates yet`);
+        else if (!used && night !== undefined) {
+          const dates = nights > 1 ? `${shortDay(night)} – ${shortDay(night + (nights - 1) * NIGHT)}` : shortDay(night);
+          out.push(`${hotel.name} has no rates for the night${nights > 1 ? "s" : ""} of ${dates} yet`);
+        } else if (used && wanted && seasonOf(used) !== wanted) out.push(`${hotel.name} has no ${wanted} rates yet`);
         else if (!used || !((hotel.rates[used]?.[room] ?? 0) > 0)) out.push(`${hotel.name} has no ${room.toUpperCase()} rate${used ? ` in ${used}` : ""}`);
       }
     }
   }
-  return out;
+  return [...new Set(out)];
 }
 
 /**

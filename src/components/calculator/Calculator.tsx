@@ -108,7 +108,7 @@ export function Calculator({ sections, adminUnlocked: unlockedAtLoad, spos }: { 
   const seasonLine = () =>
     sortPeriods(
       packages.flatMap((p) => {
-        const used = packagePeriods(p, periods);
+        const used = packagePeriods(p);
         return [...(sections.calc_makkah ? used.makkah : []), ...(sections.calc_madina ? used.madina : [])];
       }),
     ).join(" / ");

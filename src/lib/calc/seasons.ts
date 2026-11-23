@@ -134,6 +134,27 @@ export const dayOf = (ms: number) => {
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
 };
 
+/** The season a night falls in by the Ramadan table above: an Ashra, Shawwal, or Before Ramadan. */
+export function seasonOn(day: number): Season {
+  for (const r of RAMADAN_STARTS) {
+    const i = Math.floor((day - r) / DAY);
+    if (i >= 0 && i < 60) return i < 10 ? FIRST : i < 20 ? MID : i < 30 ? LAST : SHAWWAL;
+  }
+  return BEFORE;
+}
+
+/** The nights of a stay (check-in … day before check-out, UTC midnights) per season, in date order. */
+export function staySeasons(from: number, to: number): [Season, number][] {
+  const out: [Season, number][] = [];
+  for (let d = from; d < to; d += DAY) {
+    const s = seasonOn(d);
+    const last = out[out.length - 1];
+    if (last && last[0] === s) last[1]++;
+    else out.push([s, 1]);
+  }
+  return out;
+}
+
 /**
  * The next dates (first and last day, UTC midnight) a season covers, from today on: the coming Ashras and
  * Shawwal by the Ramadan table above, Before Ramadan from today (or the end of the last Shawwal) until
@@ -168,7 +189,20 @@ export function periodWindow(period: string, now = Date.now()): [number, number]
   if (!range) return own;
   // "CHECKOUT TILL 10 DEC": check-out by the 10th, so the last night it prices is the 9th
   if (range[0] === range[1] && /till|until|upto|up to|check\s*-?out/i.test(label)) return [Math.min(own[0], range[1] - DAY), range[1] - DAY];
+  // "06 FEB TILL 11 MAR": 11 Mar is the check-out day, so the last night priced is 10 Mar (2026-11-23)
+  if (range[1] > range[0] && /till|until|upto|up to/i.test(label)) return [range[0], range[1] - DAY];
   return range;
+}
+
+/**
+ * A dated rate period whose last night is already gone (user request 2026-11-23): it is hidden from the
+ * calculator and deleted from the database on the next save, so old bars stop taking space. Undated
+ * season rows never expire. A heading's year is guessed from today (see `parseRange`), which is right for
+ * the months a rate list is in use.
+ */
+export function isExpiredPeriod(name: string, now = Date.now()) {
+  if (!periodLabel(name) || !parseRange(periodLabel(name), now)) return false;
+  return periodWindow(name, now)[1] < dayOf(now);
 }
 
 /**

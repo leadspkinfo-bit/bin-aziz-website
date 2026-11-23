@@ -1,6 +1,6 @@
 import { revalidateTag } from "next/cache";
 import { adminClient } from "@/lib/admin";
-import { applyScan } from "@/lib/calc/applyScan";
+import { applyScan, removeExpiredPeriods } from "@/lib/calc/applyScan";
 import { RATES_TAG } from "@/lib/calc/constants";
 import { answersToAliases, loadAliases, rememberAliases, storedHotelNames } from "@/lib/calc/hotelMemory";
 import { canonicalize, type NameAnswer } from "@/lib/calc/hotelNames";
@@ -48,6 +48,11 @@ export async function POST(request: Request) {
     }
     const remembered = await rememberAliases(admin.supabase, answersToAliases(answers));
     const counts = await applyScan(admin.supabase, { ...scan, ...named.hotels }, body.mode);
+    // old rate periods (dates over) are cleared out with every save; a failure here never undoes the save
+    const removed = await removeExpiredPeriods(admin.supabase).catch((e) => {
+      console.error("expired periods cleanup failed:", e);
+      return [] as string[];
+    });
     revalidateTag(RATES_TAG, { expire: 0 });
     return Response.json({
       status: "success",
@@ -55,7 +60,10 @@ export async function POST(request: Request) {
       periods: scan.periods,
       ...counts,
       renames: named.renames,
-      warnings: remembered ? [] : ["Your name answers were used but not remembered: run supabase/migrations/015_hotel_names.sql in Supabase."],
+      warnings: [
+        ...(removed.length ? [`Old rate periods removed (dates over): ${removed.join(", ")}`] : []),
+        ...(remembered ? [] : ["Your name answers were used but not remembered: run supabase/migrations/015_hotel_names.sql in Supabase."]),
+      ],
     });
   } catch (e) {
     console.error("apply scan failed:", e);

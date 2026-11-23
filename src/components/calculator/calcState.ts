@@ -1,6 +1,6 @@
 import type { RoomType } from "@/lib/calc/constants";
 import type { ChildEntry, HotelEntry, PackageInput, RateHotel } from "@/lib/calc/engine";
-import { seasonOf, sortPeriods } from "@/lib/calc/seasons";
+import { seasonOf, sortPeriods, staySeasons } from "@/lib/calc/seasons";
 
 export type City = "makkah" | "madina";
 /**
@@ -119,10 +119,10 @@ export function reducer(state: PackageState[], action: Action): PackageState[] {
   });
 }
 
-/** The periods each city's filled-in stays really use, given the periods its hotels have. */
-export function packagePeriods(p: PackageState, periods: { makkah: string[]; madina: string[] }) {
-  const used = (list: StayRow[], ps: string[]) => list.filter((h) => h.hotelId).flatMap((h) => h.stays.map((s) => resolvePeriod(s.season, ps)));
-  return { makkah: used(p.makkahList, periods.makkah), madina: used(p.madinaList, periods.madina) };
+/** The seasons each city's filled-in stays fall in, by their dates (a stay can cross Ashras). */
+export function packagePeriods(p: PackageState) {
+  const used = (list: StayRow[]) => list.filter((h) => h.hotelId).flatMap((h) => h.stays.flatMap((s) => staySeasons(dayMs(s.from), dayMs(s.to)).map(([season]) => season)));
+  return { makkah: used(p.makkahList), madina: used(p.madinaList) };
 }
 
 /** Each stay of a chosen hotel becomes one priced row: same hotel and room, its own period and nights. */

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { dayOf, periodLabel, periodWindow, seasonOf } from "@/lib/calc/seasons";
+import { dayOf, SEASONS, seasonOf, seasonOn, seasonWindow, staySeasons, type Season } from "@/lib/calc/seasons";
 import { dayMs, isoDay, stayDates, stayNights, type Stay } from "./calcState";
 
 const DAY = 86_400_000;
@@ -19,42 +19,45 @@ function monthDays(year: number, month: number) {
 const monthName = (y: number, m: number) => new Date(Date.UTC(y, m, 1)).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 const fmt = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 
+/** Each Ashra (and Shawwal) has its own colour on the calendar; Before Ramadan days stay plain. */
+const TONE: Record<Season, { day: string; dot: string; chip: string } | null> = {
+  "Before Ramadan": null,
+  "1st Ashra Ramadan": { day: "bg-emerald-100 text-emerald-900", dot: "bg-emerald-500", chip: "border-emerald-300 bg-emerald-50 text-emerald-900" },
+  "Mid Ashra Ramadan": { day: "bg-amber-100 text-amber-900", dot: "bg-amber-500", chip: "border-amber-300 bg-amber-50 text-amber-900" },
+  "Last Ashra Ramadan": { day: "bg-violet-100 text-violet-900", dot: "bg-violet-500", chip: "border-violet-300 bg-violet-50 text-violet-900" },
+  Shawwal: { day: "bg-sky-100 text-sky-900", dot: "bg-sky-500", chip: "border-sky-300 bg-sky-50 text-sky-900" },
+};
+const short = (s: Season) => s.replace(" Ramadan", "");
+
 type Props = {
-  /** the season clicked, e.g. "1st Ashra Ramadan" */
+  /** the season bar clicked, e.g. "1st Ashra Ramadan": only decides which month opens first */
   season: string;
-  /** that season's rate periods from the rate list (dated bars), or just the season itself */
-  periods: string[];
   /** the stay being changed, if any */
   editing?: Stay;
   /** nights already booked in this hotel by its other stays: [check-in, check-out) */
   taken: [number, number][];
-  onApply: (period: string, from: string, to: string) => void;
+  /** `season` = the season of the check-in night; the price goes night by night by date anyway */
+  onApply: (season: string, from: string, to: string) => void;
   onClose: () => void;
 };
 
 /**
  * Booking-style date range picker: first click = check-in, second = check-out, the nights between are
- * shaded and counted at the top. The season's own dates are marked; nights already used by another stay
- * of the same hotel can't be picked again.
+ * shaded and counted at the top. Every Ashra has its own colour (user request 2026-11-23), and a range
+ * may run across Ashras: each night is priced on its own Ashra's rate. Nights already used by another
+ * stay of the same hotel can't be picked again.
  */
-export function StayCalendar({ season, periods, editing, taken, onApply, onClose }: Props) {
+export function StayCalendar({ season, editing, taken, onApply, onClose }: Props) {
   const [today] = useState(() => dayOf(Date.now()));
   const [start, setStart] = useState<number | null>(editing ? dayMs(editing.from) : null);
   const [end, setEnd] = useState<number | null>(editing ? dayMs(editing.to) : null);
   const [hover, setHover] = useState<number | null>(null);
-  // the dated bar the stay is priced on: follows the check-in date until one is picked by hand
-  const [period, setPeriod] = useState(editing?.season && periods.includes(editing.season) ? editing.season : periods[0]);
-  const [pickedByHand, setPickedByHand] = useState(Boolean(editing));
-  const windows = useMemo(() => new Map(periods.map((p) => [p, periodWindow(p)] as const)), [periods]);
-  const win = windows.get(period) ?? periodWindow(season);
-  const seasonSpan = useMemo(() => {
-    const all = [...windows.values()];
-    return [Math.min(...all.map((w) => w[0])), Math.max(...all.map((w) => w[1]))] as const;
-  }, [windows]);
+  const opened = seasonOf(season) ?? "Before Ramadan";
+  // the coming Ramadan's Ashras and Shawwal, for the legend
+  const legend = useMemo(() => SEASONS.filter((s) => TONE[s]).map((s) => [s, seasonWindow(s, today)] as const), [today]);
 
-  const firstShown = start ?? Math.max(today, win[0]);
   const [view, setView] = useState(() => {
-    const d = new Date(firstShown);
+    const d = new Date(start ?? Math.max(today, seasonWindow(opened, today)[0]));
     return { y: d.getUTCFullYear(), m: d.getUTCMonth() };
   });
 
@@ -73,53 +76,34 @@ export function StayCalendar({ season, periods, editing, taken, onApply, onClose
   // a range may not run through a night another stay already uses
   const blocked = (a: number, b: number) => taken.some(([x, y]) => a < y && b > x);
 
-  const pickPeriodFor = (d: number) => {
-    if (pickedByHand || periods.length < 2) return;
-    const match = periods.find((p) => {
-      const [a, b] = windows.get(p)!;
-      return d >= a && d <= b;
-    });
-    if (match) setPeriod(match);
-  };
-
   const click = (d: number) => {
     if (start === null || end !== null || d <= start || blocked(start, d)) {
       if (isTaken(d)) return;
       setStart(d);
       setEnd(null);
-      pickPeriodFor(d);
       return;
     }
     setEnd(d);
-    // the dated rate that covers most of these nights (nights are check-in … the day before check-out)
-    if (!pickedByHand && periods.length > 1) {
-      // covered by none (e.g. 1–5 Feb between "10 DEC TILL 31 JAN" and Ramadan): the nearest dated rate
-      const score = (p: string) => {
-        const [a, b] = windows.get(p)!;
-        const overlap = Math.min(d, b + DAY) - Math.max(start, a);
-        return overlap > 0 ? overlap : overlap - 1e15;
-      };
-      setPeriod(periods.reduce((best, p) => (score(p) > score(best) ? p : best), periods[0]));
-    }
   };
 
   const shownEnd = end ?? (start !== null && hover !== null && hover > start && !blocked(start, hover) ? hover : null);
   const nights = start !== null && end !== null ? stayNights({ from: isoDay(start), to: isoDay(end) }) : 0;
-  const outside = start !== null && end !== null && (start < win[0] || end - DAY > win[1]);
+  const split = start !== null && end !== null ? staySeasons(start, end) : [];
 
   const months = [view, view.m === 11 ? { y: view.y + 1, m: 0 } : { y: view.y, m: view.m + 1 }];
   const move = (n: number) => setView(({ y, m }) => ({ y: y + Math.floor((m + n) / 12), m: (((m + n) % 12) + 12) % 12 }));
   const canGoBack = Date.UTC(view.y, view.m, 1) > Date.UTC(new Date(today).getUTCFullYear(), new Date(today).getUTCMonth(), 1);
-
-  const label = (p: string) => periodLabel(p) || "General rate";
+  const jump = (s: Season) => {
+    const d = new Date(Math.max(today, seasonWindow(s, today)[0]));
+    setView({ y: d.getUTCFullYear(), m: d.getUTCMonth() });
+  };
 
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label={`${season} dates`} className="fixed inset-0 z-[90] flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label="Stay dates" className="fixed inset-0 z-[90] flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[92vh] w-full max-w-[640px] overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-4 pt-4 pb-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-bold tracking-wide text-[#8e1b34] uppercase">{seasonOf(season) ?? season}</p>
               <p className="mt-0.5 text-2xl font-bold text-[#044064]">
                 {nights > 0 ? `${nights} ${nights === 1 ? "Night" : "Nights"}` : start !== null ? "Choose check-out" : "Choose check-in"}
               </p>
@@ -131,28 +115,14 @@ export function StayCalendar({ season, periods, editing, taken, onApply, onClose
               ✕
             </button>
           </div>
-          {periods.length > 1 && (
-            <div role="group" aria-label="Rate dates" className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
-              {periods.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  aria-pressed={p === period}
-                  onClick={() => {
-                    setPeriod(p);
-                    setPickedByHand(true);
-                    const [a] = windows.get(p)!;
-                    const d = new Date(Math.max(a, today));
-                    setView({ y: d.getUTCFullYear(), m: d.getUTCMonth() });
-                  }}
-                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                    p === period ? "border-[#8e1b34] bg-[#8e1b34] text-white" : "border-[#bae6fd] text-[#044064] hover:border-[#044064]"
-                  }`}
-                >
-                  {label(p)}
-                </button>
+          {split.length > 0 && (
+            <ul aria-label="Nights per season" className="mt-2 flex flex-wrap gap-1.5">
+              {split.map(([s, n]) => (
+                <li key={s} className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${TONE[s]?.chip ?? "border-slate-300 bg-slate-50 text-slate-700"}`}>
+                  {short(s)} · {n} {n === 1 ? "night" : "nights"}
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </div>
 
@@ -184,13 +154,17 @@ export function StayCalendar({ season, periods, editing, taken, onApply, onClose
                     const isStart = d === start;
                     const isEnd = d === shownEnd;
                     const between = start !== null && shownEnd !== null && d > start && d < shownEnd;
-                    const inSeason = d >= win[0] && d <= win[1];
+                    const daySeason = seasonOn(d);
+                    const tone = TONE[daySeason];
                     return (
-                      <div key={d} className={`relative py-0.5 ${between ? "bg-slate-200" : ""} ${isStart && shownEnd ? "bg-gradient-to-r from-transparent from-50% to-slate-200 to-50%" : ""} ${isEnd && start !== null ? "bg-gradient-to-r from-slate-200 from-50% to-transparent to-50%" : ""}`}>
+                      <div
+                        key={d}
+                        className={`relative py-0.5 ${between ? "bg-slate-200" : ""} ${isStart && shownEnd ? "bg-gradient-to-r from-transparent from-50% to-slate-200 to-50%" : ""} ${isEnd && start !== null ? "bg-gradient-to-r from-slate-200 from-50% to-transparent to-50%" : ""}`}
+                      >
                         <button
                           type="button"
                           disabled={past || (used && !(start !== null && end === null && d > start && !blocked(start, d)))}
-                          aria-label={fmt(d)}
+                          aria-label={tone ? `${fmt(d)}, ${daySeason}` : fmt(d)}
                           aria-pressed={isStart || isEnd}
                           onClick={() => click(d)}
                           onMouseEnter={() => setHover(d)}
@@ -201,11 +175,10 @@ export function StayCalendar({ season, periods, editing, taken, onApply, onClose
                                 ? "text-slate-300"
                                 : used
                                   ? "text-slate-300 line-through"
-                                  : `${inSeason ? "font-semibold text-[#044064]" : "text-slate-600"} hover:ring-2 hover:ring-[#8e1b34]/40`
+                                  : `${tone ? `${tone.day} font-semibold` : "text-slate-700"} hover:ring-2 hover:ring-[#8e1b34]/40`
                           }`}
                         >
                           {new Date(d).getUTCDate()}
-                          {inSeason && !isStart && !isEnd && !past && !used && <span aria-hidden className="absolute bottom-1 size-1 rounded-full bg-[#0284c7]" />}
                         </button>
                       </div>
                     );
@@ -214,22 +187,23 @@ export function StayCalendar({ season, periods, editing, taken, onApply, onClose
               </div>
             ))}
           </div>
-          <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="size-1.5 rounded-full bg-[#0284c7]" /> {label(period) === "General rate" ? seasonOf(season) : label(period)}: {stayDates({ from: isoDay(win[0]), to: isoDay(win[1]) })}
-            </span>
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]">
+            {legend.map(([s, w]) => (
+              <button key={s} type="button" onClick={() => jump(s)} title={`Show ${s}`} className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 ${TONE[s]!.chip}`}>
+                <span className={`size-2 rounded-full ${TONE[s]!.dot}`} />
+                <span className="font-semibold">{short(s)}</span> {stayDates({ from: isoDay(w[0]), to: isoDay(w[1]) })}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Plain days = Before Ramadan. A stay may cross Ashras — every night is charged at its own Ashra&apos;s rate.
             {taken.length > 0 && (
-              <span>
-                <span className="text-slate-300 line-through">12</span> = night already in another stay of this hotel
-              </span>
+              <>
+                {" "}
+                <span className="text-slate-300 line-through">12</span> = night already in another stay of this hotel.
+              </>
             )}
           </p>
-          {outside && (
-            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Some of these nights fall outside {seasonOf(season)} ({stayDates({ from: isoDay(seasonSpan[0]), to: isoDay(seasonSpan[1]) })}). The {seasonOf(season)} rate is still used for
-              all of them — add another season for the other nights if their rate differs.
-            </p>
-          )}
         </div>
 
         <div className="sticky bottom-0 flex gap-2 border-t border-slate-200 bg-white px-4 py-3">
@@ -249,7 +223,7 @@ export function StayCalendar({ season, periods, editing, taken, onApply, onClose
           <button
             type="button"
             disabled={!nights}
-            onClick={() => start !== null && end !== null && onApply(period, isoDay(start), isoDay(end))}
+            onClick={() => start !== null && end !== null && onApply(seasonOn(start), isoDay(start), isoDay(end))}
             className="rounded-lg bg-[#8e1b34] px-5 py-2 text-sm font-bold text-white disabled:opacity-40"
           >
             {nights ? `Save ${nights} ${nights === 1 ? "night" : "nights"}` : "Save"}

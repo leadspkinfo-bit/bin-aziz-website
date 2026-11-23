@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeMultiPackage, computePackageTotal, getRoomCapacity, getVisaRate, missingRates, rateSeason, stayPeriods, type PackageInput, type RatesData } from "@/lib/calc/engine";
-import { parseRange, periodLabel, periodName, seasonOf, seasonsForPeriod, sortPeriods } from "@/lib/calc/seasons";
+import { parseRange, periodLabel, periodName, seasonOf, seasonOn, seasonsForPeriod, sortPeriods, staySeasons } from "@/lib/calc/seasons";
 import { newPackage, newStay, reducer, resolvePeriod, stayDates, stayNights, toPayload } from "@/components/calculator/calcState";
 import { periodWindow, seasonWindow } from "@/lib/calc/seasons";
 import { canonicalize, hotelKey, splitCombined } from "@/lib/calc/hotelNames";
@@ -434,7 +434,7 @@ describe("stay dates from the calendar", () => {
     expect(seasonWindow("1st Ashra Ramadan", now)).toEqual([d("2027-02-08"), d("2027-02-17")]);
     expect(seasonWindow("Shawwal", now)).toEqual([d("2027-03-10"), d("2027-04-08")]);
     expect(seasonWindow("Before Ramadan", now)).toEqual([d("2026-11-04"), d("2027-02-07")]);
-    expect(periodWindow("Before Ramadan — 10 DEC TILL 31 JAN", now)).toEqual([d("2026-12-10"), d("2027-01-31")]);
+    expect(periodWindow("Before Ramadan — 10 DEC TILL 31 JAN", now)).toEqual([d("2026-12-10"), d("2027-01-30")]);
     expect(periodWindow("Before Ramadan — CHECKOUT TILL 10 DEC", now)).toEqual([d("2026-11-04"), d("2026-12-09")]);
   });
 });
@@ -619,6 +619,11 @@ describe("WhatsApp quotation layout", () => {
       madinaDetails: [stay("ANWAR AL AWALI", "2027-01-27", 4)],
     });
     expect(out.map((h) => `${h.city} ${h.name} ${h.nights}`)).toEqual(["Makkah AL KISWA TOWERS 5", "Madinah ANWAR AL AWALI 4", "Makkah MELLA 1 10"]);
+    expect(out[2].dates).toBe("08 Feb – 18 Feb 2027");
+  });
+  it("does not join two stays of one hotel with a gap between them", () => {
+    const out = tripStays({ makkahDetails: [stay("MELLA 1", "2027-02-08", 3), stay("MELLA 1", "2027-02-13", 2)], madinaDetails: [] });
+    expect(out.map((h) => h.nights)).toEqual([3, 2]);
   });
   it("splits the stored location into street and distance", () => {
     expect(splitLocation("AL TAYSIR STREET, SHUTTLE SERVICE")).toEqual({ street: "AL TAYSIR STREET", distance: "SHUTTLE SERVICE" });
@@ -626,6 +631,10 @@ describe("WhatsApp quotation layout", () => {
     expect(splitLocation("SHUTTLE SERVICE")).toEqual({ street: "", distance: "SHUTTLE SERVICE" });
     expect(splitLocation("AJYAD STREET")).toEqual({ street: "AJYAD STREET", distance: "" });
     expect(splitLocation("-")).toEqual({ street: "", distance: "" });
+    // stored without a comma, as the scan writes it now
+    expect(splitLocation("MASJID BILAL SIDE 750 MTR")).toEqual({ street: "MASJID BILAL SIDE", distance: "750 MTR" });
+    expect(splitLocation("BAB AL SALAM ROAD 300-400 MTR")).toEqual({ street: "BAB AL SALAM ROAD", distance: "300-400 MTR" });
+    expect(splitLocation("ABDUL AZIZ ROAD SHUTTLE SERVICE")).toEqual({ street: "ABDUL AZIZ ROAD", distance: "SHUTTLE SERVICE" });
   });
 });
 
@@ -734,5 +743,96 @@ describe("each night priced on the rate period its date falls in", () => {
     } finally {
       Date.now = vi_now;
     }
+  });
+});
+
+describe("package season line", () => {
+  it("accepts a long line of several Ashra periods", async () => {
+    const { calculateSchema } = await import("@/lib/calc/schema");
+    const season = ["1st Ashra Ramadan", "Mid Ashra Ramadan", "Last Ashra Ramadan"].map((s) => `${s} — 06 FEB TILL 27 FEB 2027 (HEADING AS PRINTED)`).join(" / ").repeat(3);
+    expect(season.length).toBeGreaterThan(200);
+    const p = { id: "1", ticketPrice: 0, airline: "PIA", ticketType1: "Direct", ticketType2: "Group Ticket", adults: 1, infants: 0, transportType: "bus", makkahList: [], madinaList: [], childDetails: [] };
+    expect(calculateSchema.safeParse({ season, packages: [p] }).success).toBe(true);
+  });
+});
+
+describe("a stay across Ashras", () => {
+  // Ramadan 1448 starts 8 Feb 2027: 1st Ashra 8–17 Feb, Mid 18–27 Feb
+  const hotel = (rates: Record<string, { double: number }>): RatesData => ({
+    hotels: { makkah: { h: { name: "H", location: "-", rates } }, madina: {} },
+    visa: { bus: { 47: 0 }, private: {} },
+    dynamicProfit: 0,
+    periods: Object.keys(rates),
+    ziyarat: { makkah: 0, madina: 0 },
+    sarToPkr: 1,
+  });
+  const entry = { hotelId: "h", room: "double" as const, nights: 5, season: "1st Ashra Ramadan", from: "2027-02-15" };
+
+  it("charges each night at its own Ashra's rate, whichever bar the calendar was opened from", () => {
+    const data = hotel({ "1st Ashra Ramadan": { double: 100 }, "Mid Ashra Ramadan": { double: 200 } });
+    const r = computePackageTotal(pkg({ season: undefined, makkahList: [entry] }), data);
+    expect(r.hotelCostSAR).toBe(3 * 100 + 2 * 200);
+    expect(computePackageTotal(pkg({ season: undefined, makkahList: [{ ...entry, season: "Mid Ashra Ramadan" }] }), data).hotelCostSAR).toBe(700);
+    expect(missingRates({ makkahList: [entry], madinaList: [] }, data)).toEqual([]);
+  });
+
+  it("names the Ashra a hotel has no rates for, once", () => {
+    const data = hotel({ "1st Ashra Ramadan": { double: 100 } });
+    expect(missingRates({ makkahList: [entry, { ...entry, from: "2027-02-20", nights: 2 }], madinaList: [] }, data)).toEqual(["H has no Mid Ashra Ramadan rates yet"]);
+  });
+
+  it("colours: seasonOn / staySeasons follow the Ramadan table", () => {
+    const d = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+    expect(seasonOn(d("2027-02-07"))).toBe("Before Ramadan");
+    expect(seasonOn(d("2027-02-17"))).toBe("1st Ashra Ramadan");
+    expect(seasonOn(d("2027-02-18"))).toBe("Mid Ashra Ramadan");
+    expect(seasonOn(d("2027-03-01"))).toBe("Last Ashra Ramadan");
+    expect(staySeasons(d("2027-02-15"), d("2027-02-20"))).toEqual([
+      ["1st Ashra Ramadan", 3],
+      ["Mid Ashra Ramadan", 2],
+    ]);
+  });
+});
+
+describe("one single night in the next rate", () => {
+  it("is charged at the next rate (dated periods and Ashras)", () => {
+    const B = "Before Ramadan";
+    const data: RatesData = {
+      hotels: {
+        makkah: {
+          h: {
+            name: "H",
+            location: "-",
+            rates: { [`${B} — 30 NOV TILL 20 DEC`]: { double: 100 }, [`${B} — 20 DEC TILL 06 FEB`]: { double: 200 }, "1st Ashra Ramadan": { double: 300 }, "Mid Ashra Ramadan": { double: 400 } },
+          },
+        },
+        madina: {},
+      },
+      visa: { bus: { 47: 0 }, private: {} },
+      dynamicProfit: 0,
+      periods: [],
+      ziyarat: { makkah: 0, madina: 0 },
+      sarToPkr: 1,
+    };
+    const cost = (from: string, nights: number) => computePackageTotal(pkg({ season: undefined, makkahList: [{ hotelId: "h", room: "double", nights, season: B, from }] }), data).hotelCostSAR;
+    // 16–21 Dec: nights 16, 17, 18, 19 at 100, the night of 20 Dec at 200
+    expect(cost("2026-12-16", 5)).toBe(4 * 100 + 200);
+    // 13–19 Feb 2027: nights 13–17 in 1st Ashra (300), the night of 18 Feb in Mid Ashra (400)
+    expect(cost("2027-02-13", 6)).toBe(5 * 300 + 400);
+  });
+});
+
+describe("rate periods whose dates are over", () => {
+  it("expire the day after their last night; plain seasons never do", async () => {
+    const { isExpiredPeriod } = await import("@/lib/calc/seasons");
+    const on = (iso: string) => Date.parse(`${iso}T12:00:00Z`);
+    const till30 = "Before Ramadan — CHECKOUT TILL 30 NOV";
+    expect(isExpiredPeriod(till30, on("2026-11-29"))).toBe(false); // the night of 29 Nov is still sold
+    expect(isExpiredPeriod(till30, on("2026-11-30"))).toBe(true);
+    expect(isExpiredPeriod("Before Ramadan — 30 NOV TILL 20 DEC", on("2026-12-19"))).toBe(false);
+    expect(isExpiredPeriod("Before Ramadan — 30 NOV TILL 20 DEC", on("2026-12-20"))).toBe(true);
+    expect(isExpiredPeriod("Before Ramadan — 20 DEC TILL 06 FEB", on("2026-12-25"))).toBe(false);
+    expect(isExpiredPeriod("Before Ramadan", on("2027-06-01"))).toBe(false);
+    expect(isExpiredPeriod("1st Ashra Ramadan — General", on("2027-06-01"))).toBe(false);
   });
 });

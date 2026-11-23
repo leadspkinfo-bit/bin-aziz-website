@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useDialogs } from "@/components/ui/Dialogs";
 import { MAX_SYNC_IMAGES, SCAN_JPEG_QUALITY, SCAN_MAX_DIMENSION } from "@/lib/calc/constants";
 import { periodLabel, seasonOf } from "@/lib/calc/seasons";
@@ -65,11 +65,48 @@ async function postJson(url: string, body: unknown) {
   return res.json();
 }
 
-type Status = "waiting" | "scanning" | "done" | "failed";
-type Item = { id: number; file: File; target: ScanTarget; status: Status; scan?: NormalizedScan; error?: string };
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// files are scanned two at a time: quicker than one by one, gentle enough for the Gemini rate limit
-const PARALLEL = 2;
+/*
+ * Scan cache: a sheet already scanned (same picture, same target) is answered from this browser instead
+ * of Gemini, so scanning a batch again after a failure only spends quota on the files still missing.
+ */
+const CACHE = "scan-cache-v1:";
+async function cacheKey(data: string, target: ScanTarget) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${target}|${data}`));
+  return CACHE + [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function cacheGet(key: string): NormalizedScan | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as NormalizedScan) : null;
+  } catch {
+    return null;
+  }
+}
+function cachePut(key: string, scan: NormalizedScan) {
+  try {
+    localStorage.setItem(key, JSON.stringify(scan));
+  } catch {
+    // storage full or blocked: drop the old scans and carry on without the cache
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith(CACHE))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch {}
+  }
+}
+
+type Status = "waiting" | "scanning" | "done" | "failed";
+type Item = { id: number; file: File; target: ScanTarget; status: Status; scan?: NormalizedScan; error?: string; note?: string };
+
+/*
+ * One file at a time, a few seconds apart: Gemini's free tier allows only a handful of requests a minute,
+ * and two at once with quick retries used to burn the quota so later files failed. A rate limit is not a
+ * failure any more — the file waits the time Gemini asks for and is tried again by itself.
+ */
+const GAP_MS = 4_000;
+const MAX_WAITS = 8;
 let nextId = 0;
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
@@ -309,6 +346,8 @@ export function ScanUploader({ onSynced }: { onSynced?: () => void } = {}) {
   const answer = (q: NameQuestion, target: string | null) =>
     setAnswers((list) => [...list.filter((a) => !(a.city === q.city && a.name === q.name)), { city: q.city, name: q.name, target }]);
 
+  // files removed while the queue runs are skipped, so they never spend quota
+  const removed = useRef(new Set<number>());
   const update = (id: number, patch: Partial<Item>) => setItems((list) => list.map((x) => (x.id === id ? { ...x, ...patch } : x)));
 
   const add = (files: FileList | File[] | null) => {
@@ -322,16 +361,41 @@ export function ScanUploader({ onSynced }: { onSynced?: () => void } = {}) {
     });
   };
 
-  async function scanOne(item: Item): Promise<NormalizedScan | null> {
-    update(item.id, { status: "scanning", error: undefined });
+  /** Counts down on the file's line while it waits for the rate limit. */
+  async function countdown(id: number, seconds: number, why: string) {
+    for (let s = seconds; s > 0; s--) {
+      update(id, { note: `${why} — retrying in ${s}s` });
+      await wait(1000);
+    }
+    update(id, { note: undefined });
+  }
+
+  /** Scans one file; `fromCache` = answered from this browser, so no Gemini request was made. */
+  async function scanOne(item: Item): Promise<{ scan: NormalizedScan | null; fromCache: boolean }> {
+    update(item.id, { status: "scanning", error: undefined, note: undefined });
     try {
-      const res = await postJson("/api/scan", { image: await prepareFile(item.file), target: item.target });
-      if (res.status !== "success") throw new Error(res.message);
-      update(item.id, { status: "done", scan: res.data });
-      return res.data;
+      const image = await prepareFile(item.file);
+      const key = await cacheKey(image, item.target).catch(() => null);
+      const cached = key ? cacheGet(key) : null;
+      if (cached) {
+        update(item.id, { status: "done", scan: cached, note: "from earlier scan" });
+        return { scan: cached, fromCache: true };
+      }
+      for (let tries = 0; ; tries++) {
+        // a timed-out request (Vercel answers with an HTML page) counts as busy, not as a broken file
+        const res = await postJson("/api/scan", { image, target: item.target }).catch(() => ({ status: "busy", retryAfter: 10, message: "Server ne jawab nahi diya." }));
+        if (res.status === "success") {
+          if (key) cachePut(key, res.data);
+          update(item.id, { status: "done", scan: res.data, note: undefined });
+          return { scan: res.data, fromCache: false };
+        }
+        if (res.status !== "busy" || tries >= MAX_WAITS) throw new Error(res.message);
+        await countdown(item.id, Math.max(5, Math.round(Number(res.retryAfter) || 30)), "Gemini limit");
+        update(item.id, { status: "scanning" });
+      }
     } catch (e) {
-      update(item.id, { status: "failed", error: e instanceof Error ? e.message : "Scan failed." });
-      return null;
+      update(item.id, { status: "failed", error: e instanceof Error ? e.message : "Scan failed.", note: undefined });
+      return { scan: null, fromCache: false };
     }
   }
 
@@ -342,20 +406,21 @@ export function ScanUploader({ onSynced }: { onSynced?: () => void } = {}) {
     if (res?.status === "plan") setNames({ renames: res.renames, questions: res.questions });
   }
 
-  /** Scans every file that isn't scanned yet (or failed), PARALLEL at a time, then checks the names. */
+  /** Scans every file that isn't scanned yet (or failed), one by one with a short gap, then checks the names. */
   async function scanAll(only?: Item[]) {
     const queue = (only ?? items).filter((x) => x.status === "waiting" || x.status === "failed");
     if (!queue.length) return;
     setBusy("scan");
     setSummary([]);
     const fresh: NormalizedScan[] = [];
-    const workers = Array.from({ length: Math.min(PARALLEL, queue.length) }, async () => {
-      for (let next = queue.shift(); next; next = queue.shift()) {
-        const s = await scanOne(next);
-        if (s) fresh.push(s);
-      }
-    });
-    await Promise.all(workers);
+    let asked = false;
+    for (const next of queue) {
+      if (removed.current.has(next.id)) continue;
+      if (asked) await wait(GAP_MS);
+      const { scan, fromCache } = await scanOne(next);
+      asked = !fromCache;
+      if (scan) fresh.push(scan);
+    }
     await checkNames([...items.filter((x) => x.status === "done" && x.scan).map((x) => x.scan!), ...fresh]);
     setBusy("");
   }
@@ -470,6 +535,7 @@ export function ScanUploader({ onSynced }: { onSynced?: () => void } = {}) {
                   aria-label={`Remove ${item.file.name}`}
                   disabled={item.status === "scanning"}
                   onClick={() => {
+                    removed.current.add(item.id);
                     setItems((list) => list.filter((x) => x.id !== item.id));
                     setNames(null);
                   }}
@@ -478,6 +544,7 @@ export function ScanUploader({ onSynced }: { onSynced?: () => void } = {}) {
                   ✕
                 </button>
               </div>
+              {item.note && item.status !== "failed" && <p className="mt-1 pl-9 text-xs text-gold-300/80">{item.note}</p>}
               {item.scan && item.status === "done" && <p className="mt-1 pl-9 text-xs text-emerald-200/80">{scanLine(item.scan)}</p>}
               {item.status === "failed" && (
                 <p className="mt-1 pl-9 text-xs text-red-200">

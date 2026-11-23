@@ -14,7 +14,6 @@ export const MAX_SYNC_IMAGES = 20;
 export const SCAN_MAX_DIMENSION = 2500;
 export const SCAN_JPEG_QUALITY = 0.88;
 export const GEMINI_MAX_TOKENS = 32768;
-export const GEMINI_RETRIES = 3;
 export const GEMINI_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash"];
 
 export const RATES_TAG = "rates";

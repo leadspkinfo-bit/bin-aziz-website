@@ -4,7 +4,7 @@ import { useId, useState, type ActionDispatch, type ReactNode } from "react";
 import { AIRLINES, ROOM_TYPES, type RoomType } from "@/lib/calc/constants";
 import { stayPeriods, type RateHotel } from "@/lib/calc/engine";
 import type { PublicResult } from "@/lib/calc/quotations";
-import { periodLabel, SEASONS, seasonOf } from "@/lib/calc/seasons";
+import { periodLabel, SEASONS, seasonOf, staySeasons } from "@/lib/calc/seasons";
 import type { CalcSections } from "@/lib/settings";
 import { dayMs, newStay, periodsOf, resolvePeriod, rowNights, stayDates, stayNights, type Action, type City, type PackageState, type Stay, type StayRow } from "./calcState";
 import { HotelPicker } from "./HotelPicker";
@@ -63,15 +63,25 @@ const chipName = (period: string) => {
  * Only a warning when something is wrong (no rates, room N/A, other dates used) — never a rate:
  * prices stay on the server and appear only as the package total and in the quotation.
  */
-function rateWarning(hotel: RateHotel, room: RoomType, period: string, used: string | undefined, dated: boolean): { text: string; red: boolean } | null {
+function rateWarning(hotel: RateHotel, room: RoomType, period: string, used: string | undefined, dated: boolean, wanted: string | null): { text: string; red: boolean } | null {
   const rate = used ? hotel.rates[used]?.[room] : undefined;
-  if (!used) return { text: "this hotel is not available yet", red: true };
-  if (seasonOf(used) !== seasonOf(period)) return { text: `no ${seasonOf(period) ?? period} rates for this hotel yet`, red: true };
+  if (!used) {
+    if (wanted && !Object.keys(hotel.rates).some((p) => seasonOf(p) === wanted)) return { text: `no ${wanted} rates for this hotel yet`, red: true };
+    return { text: "the rate list has no rates for some of these dates yet", red: true };
+  }
+  if (wanted && seasonOf(used) !== wanted) return { text: `no ${wanted} rates for this hotel yet`, red: true };
   if (!rate) return { text: `${room.toUpperCase()} is not available — please choose another room`, red: true };
   // a dated rate the stay's own nights fall in is the right one, not a substitute
   if (used !== period && !dated) return { text: `not available for ${barLabel(period)} — ${barLabel(used)} is used`, red: false };
   return null;
 }
+
+const stayParts = (s: Stay) => staySeasons(dayMs(s.from), dayMs(s.to));
+/** A chip's season text, by the nights' dates: "1st Ashra", or "1st Ashra 4N + Mid Ashra 3N" when it crosses. */
+const stayLabel = (s: Stay) => {
+  const parts = stayParts(s);
+  return parts.length > 1 ? parts.map(([season, n]) => `${chipName(season)} ${n}N`).join(" + ") : chipName(parts[0]?.[0] ?? s.season);
+};
 
 type Open = { index: number; season: string; stay?: Stay };
 
@@ -98,11 +108,6 @@ function HotelRows({
   const title = city === "makkah" ? "Makkah" : "Madina";
   const nights = rows.reduce((sum, r) => sum + (r.hotelId ? rowNights(r) : 0), 0);
   const edit = (index: number, patch: Partial<StayRow>) => dispatch({ type: "hotelPatch", id: pkg.id, city, index, patch });
-  // the season's dated bars from the rate list, or the plain season when none are uploaded
-  const seasonPeriods = (season: string) => {
-    const own = periodsOf(season, periods);
-    return own.length ? own : [season];
-  };
 
   return (
     <>
@@ -111,15 +116,22 @@ function HotelRows({
       </SectionTitle>
       {rows.map((row, index) => {
         const hotel = hotels[row.hotelId];
-        const used = new Set(row.stays.map((s) => seasonOf(s.season)));
+        // the seasons the stays' nights fall in, by date (one stay can cross Ashras)
+        const used = new Set(row.stays.flatMap((s) => stayParts(s).map(([season]) => season)));
         const warnings = hotel
-          ? row.stays.flatMap((s) => {
-              const period = resolvePeriod(s.season, periods);
-              return stayPeriods(hotel, { season: period, from: s.from, nights: stayNights(s) }).flatMap((g) => {
-                const w = rateWarning(hotel, row.room, period, g.period, g.dated);
-                return w ? [{ ...w, text: `${chipName(s.season)}: ${w.text}` }] : [];
-              });
-            })
+          ? [
+              ...new Map(
+                row.stays
+                  .flatMap((s) => {
+                    const period = resolvePeriod(s.season, periods);
+                    return stayPeriods(hotel, { season: period, from: s.from, nights: stayNights(s) }).flatMap((g) => {
+                      const w = rateWarning(hotel, row.room, period, g.period, g.dated, g.season);
+                      return w ? [{ ...w, text: `${g.season ? chipName(g.season) : stayDates(s)}: ${w.text}` }] : [];
+                    });
+                  })
+                  .map((w) => [w.text, w] as const),
+              ).values(),
+            ]
           : [];
         const na = (r: RoomType) =>
           Boolean(
@@ -181,11 +193,11 @@ function HotelRows({
                         onClick={() => setOpen({ index, season: seasonOf(s.season) ?? s.season, stay: s })}
                         className="py-1.5 pr-1 pl-3 text-left whitespace-nowrap"
                       >
-                        <span className="font-bold text-[#8e1b34]">{chipName(s.season)}</span> · {stayDates(s)} · {stayNights(s)}N
+                        <span className="font-bold text-[#8e1b34]">{stayLabel(s)}</span> · {stayDates(s)} · {stayNights(s)}N
                       </button>
                       <button
                         type="button"
-                        aria-label={`Remove ${chipName(s.season)} ${stayDates(s)}`}
+                        aria-label={`Remove ${stayLabel(s)} ${stayDates(s)}`}
                         onClick={() => edit(index, { stays: row.stays.filter((x) => x.id !== s.id) })}
                         className="mr-1 grid size-6 place-items-center rounded-full text-[#8e1b34] hover:bg-[#8e1b34] hover:text-white"
                       >
@@ -209,13 +221,12 @@ function HotelRows({
       {open && rows[open.index] && (
         <StayCalendar
           season={open.season}
-          periods={seasonPeriods(open.season)}
           editing={open.stay}
           taken={rows[open.index].stays.filter((s) => s.id !== open.stay?.id).map((s) => [dayMs(s.from), dayMs(s.to)] as [number, number])}
           onClose={() => setOpen(null)}
-          onApply={(period, from, to) => {
+          onApply={(season, from, to) => {
             const row = rows[open.index];
-            const stays = open.stay ? row.stays.map((s) => (s.id === open.stay!.id ? { ...s, season: period, from, to } : s)) : [...row.stays, newStay(period, from, to)];
+            const stays = open.stay ? row.stays.map((s) => (s.id === open.stay!.id ? { ...s, season, from, to } : s)) : [...row.stays, newStay(season, from, to)];
             edit(open.index, { stays });
             setOpen(null);
           }}

@@ -25,7 +25,8 @@ export const packageSchema = z.object({
 
 export const calculateSchema = z.object({
   packages: z.array(packageSchema).min(1).max(20),
-  season: z.string().max(200),
+  // every rate period the packages use, joined by " / " (several Ashras easily pass 200 characters)
+  season: z.string().max(4000),
 });
 
 const text = z.string().max(500).default("");

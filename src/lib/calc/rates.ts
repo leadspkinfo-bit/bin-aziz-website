@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cacheLife, cacheTag } from "next/cache";
 import { MADINA_ZIYARAT_SAR, MAKKAH_ZIYARAT_SAR, INFANT_PRICE_PKR, PROFIT_PKR, RATES_TAG, SAR_TO_PKR, type RoomType } from "./constants";
 import type { RateHotel, RatesData } from "./engine";
-import { SEASONS } from "./seasons";
+import { isExpiredPeriod, SEASONS } from "./seasons";
 
 const FALLBACK: RatesData = {
   hotels: { makkah: {}, madina: {} },
@@ -50,11 +50,17 @@ async function loadRates(): Promise<RatesData> {
     data.hotels[h.city as "makkah" | "madina"][h.id] = hotel;
     byId.set(h.id, hotel);
   }
+  // periods whose dates are over are left out (and deleted from the database on the next save)
+  const now = Date.now();
+  const expired = new Set([...seasonName.values()].filter((name) => isExpiredPeriod(name, now)));
   for (const r of rates) {
     const hotel = byId.get(r.hotel_id);
     const season = seasonName.get(r.season_id);
-    if (hotel && season) (hotel.rates[season] ??= {})[r.room_type] = Number(r.rate_sar);
+    if (hotel && season && !expired.has(season)) (hotel.rates[season] ??= {})[r.room_type] = Number(r.rate_sar);
   }
+  // a hotel with no rate left (all its periods over) is not offered at all
+  for (const city of ["makkah", "madina"] as const)
+    for (const [id, h] of Object.entries(data.hotels[city])) if (!Object.keys(h.rates).length) delete data.hotels[city][id];
   for (const v of visa.data ?? []) data.visa[v.transport_type as "bus" | "private"][v.pax] = Number(v.rate_sar);
 
   const value = new Map((settings.data ?? []).map((s) => [s.key as string, Number(s.value)]));
