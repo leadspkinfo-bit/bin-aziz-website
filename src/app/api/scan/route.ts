@@ -2,7 +2,8 @@ import { adminClient } from "@/lib/admin";
 import { scanImage } from "@/lib/gemini/client";
 import type { ScanTarget } from "@/lib/gemini/prompt";
 
-export const maxDuration = 60;
+// a sheet read by a thinking model can take over a minute (Vercel allows up to 300 s)
+export const maxDuration = 300;
 
 const TARGETS: ScanTarget[] = ["makkah", "madina", "transport", "auto"];
 

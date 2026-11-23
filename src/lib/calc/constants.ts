@@ -14,7 +14,8 @@ export const MAX_SYNC_IMAGES = 20;
 export const SCAN_MAX_DIMENSION = 2500;
 export const SCAN_JPEG_QUALITY = 0.88;
 export const GEMINI_MAX_TOKENS = 32768;
-export const GEMINI_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash"];
+// Free tier = 20 requests a day PER MODEL (2026-11-23), so the scan walks through several; best readers first.
+export const GEMINI_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 
 export const RATES_TAG = "rates";
 export const STANDARD_RATES = "Standard Rates";
