@@ -297,11 +297,9 @@ export function computeMultiPackage(packages: PackageInput[], allData: RatesData
   let grandTotal = 0;
   const results = packages.map((pkg, i) => {
     const result = computePackageTotal(pkg, allData);
-    // staff's extra profit, shared equally by every traveller (adults + children + infants) and folded
-    // into each per-person price, so per person × people still adds up to the total exactly
-    const travellers = result.adults + result.children + result.infants;
-    const extra = Math.max(0, Number(pkg.extraProfit) || 0);
-    const share = travellers > 0 ? Math.round(extra / travellers) : 0;
+    // staff's extra profit is typed PER PERSON (user request 2026-11-26) and added to every traveller's
+    // price — adults, children and infants — so the package gets it × the number of travellers
+    const share = Math.round(Math.max(0, Number(pkg.extraProfit) || 0));
     const infantPrice = baseInfantPrice + share;
     // ziyarat folded into each adult's and child's price (never an infant's), or kept as its own line
     const zPer = result.ziyaratIncluded ? result.ziyaratPKR : 0;

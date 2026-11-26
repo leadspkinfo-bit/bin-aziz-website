@@ -663,11 +663,11 @@ describe("extra Profit typed on the calculator", () => {
     extraProfit,
   });
 
-  it("is shared by every traveller and folded into each per-person price; the lines still add up", () => {
+  it("is typed per person and added to every traveller's price; the lines still add up", () => {
     const plain = computeMultiPackage([pkg()], data);
-    const marked = computeMultiPackage([pkg(12000)], data);
+    const marked = computeMultiPackage([pkg(2000)], data);
     const [a, b] = [plain.packages[0], marked.packages[0]];
-    // 4 adults + 1 child + 1 infant = 6 travellers → 2,000 each
+    // 2,000 each × (4 adults + 1 child + 1 infant) = 12,000
     expect(b.perAdultPrice).toBe(a.perAdultPrice + 2000);
     expect(b.childPrices[0].each).toBe(a.childPrices[0].each + 2000);
     expect(b.infantPrice).toBe(a.infantPrice + 2000);
@@ -677,8 +677,8 @@ describe("extra Profit typed on the calculator", () => {
     expect(marked.grandTotal).toBe(plain.grandTotal + 12000);
   });
 
-  it("an amount that doesn't divide evenly is rounded per person, and the total is still per person × people", () => {
-    const b = computeMultiPackage([pkg(10000)], data).packages[0];
+  it("a fraction is rounded per person, and the total is still per person × people", () => {
+    const b = computeMultiPackage([pkg(1666.6)], data).packages[0];
     expect(b.finalPackageTotal).toBe(b.perAdultPrice * 4 + b.childPrices[0].each + b.infantPrice);
   });
 

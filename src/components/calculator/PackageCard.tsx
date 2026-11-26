@@ -389,7 +389,7 @@ export function PackageCard({ pkg, number, hotels, periods, result, canRemove, s
 
         {/* staff only: extra markup, shared into every traveller's price; never shown to the client as profit */}
         <div className="mt-5 max-w-xs">
-          <Field label="Profit">
+          <Field label="Profit per person">
             {(id) => (
               <input
                 id={id}
@@ -403,7 +403,7 @@ export function PackageCard({ pkg, number, hotels, periods, result, canRemove, s
               />
             )}
           </Field>
-          <p className="mt-1 text-[11px] text-slate-500">Shared equally into every traveller&apos;s price — the client never sees it.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Added to every traveller&apos;s price (adult, child, infant) — the client never sees it.</p>
         </div>
 
         {sections.calc_notes && (

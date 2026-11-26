@@ -43,7 +43,8 @@ export function logDetails(result: MultiPackageResult, input: QuotationBody["pac
       perAdult: p.perAdultPrice,
       children_: p.childPrices.map((c) => ({ count: c.count, bed: c.bedType, each: c.each })),
       infantEach: p.infantPrice,
-      extraProfit: Math.max(0, Number(input[i]?.extraProfit) || 0),
+      // the package's whole extra profit (typed per person since 2026-11-26), as older rows stored it
+      extraProfit: Math.round(Math.max(0, Number(input[i]?.extraProfit) || 0)) * (p.adults + p.children + p.infants),
       total: p.finalPackageTotal,
       notes: p.notes,
     })),
